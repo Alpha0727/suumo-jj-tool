@@ -1,5 +1,5 @@
 {
-  "version": "7.19",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.19.user.js",
-  "notes": "アップデート機能の最終動作確認用です。機能・動作の変更はありません。"
+  "version": "7.20",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.20.user.js",
+  "notes": "更新確認のGitHub APIレスポンス復号処理を修正しました。"
 }
