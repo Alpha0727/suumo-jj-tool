@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.9
+// @version      7.10
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・3秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -28,9 +28,9 @@
   };
 
   const DATE_OFFSETS = {
-    apply: Number(GM_getValue("date_offset_apply", 0)),
-    contract: Number(GM_getValue("date_offset_contract", 3)),
-    confirm: Number(GM_getValue("date_offset_confirm", 7))
+    apply: Number(GM_getValue("date_offset_apply", -7)),
+    contract: Number(GM_getValue("date_offset_contract", 7)),
+    confirm: Number(GM_getValue("date_offset_confirm", 0))
   };
 
   const BATCH_KEYS = {
