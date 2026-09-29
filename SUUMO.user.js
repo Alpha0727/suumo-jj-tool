@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.13
+// @version      7.14
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -11,6 +11,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (function () {
@@ -44,7 +46,7 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.13";
+  const SCRIPT_VERSION = "7.14";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
 
   function compareVersions(a, b) {
@@ -59,26 +61,32 @@
     return 0;
   }
 
-  async function checkScriptUpdate() {
+  function checkScriptUpdate() {
     const status = document.getElementById("tm-version-status");
     const alertMark = document.getElementById("tm-update-alert");
     const button = document.getElementById("tm-update-button");
     if (!status || !alertMark || !button) return;
 
-    try {
-      const response = await fetch(SCRIPT_URL + "?t=" + Date.now(), { cache: "no-store" });
-      if (!response.ok) throw new Error("update check failed");
-      const source = await response.text();
-      const latest = source.match(/@version\\s+([^\\s]+)/)?.[1];
-      if (!latest || compareVersions(latest, SCRIPT_VERSION) <= 0) return;
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: SCRIPT_URL + "?t=" + Date.now(),
+      headers: { "Cache-Control": "no-cache" },
+      onload: response => {
+        try {
+          if (response.status < 200 || response.status >= 300) throw new Error("update check failed");
+          const latest = String(response.responseText || "").match(/@version\s+([^\s]+)/)?.[1];
+          if (!latest || compareVersions(latest, SCRIPT_VERSION) <= 0) return;
 
-      alertMark.style.display = "inline-flex";
-      alertMark.title = `現在：Ver.${SCRIPT_VERSION}\n最新版：Ver.${latest}\n新しいバージョンがあります`;
-      button.style.display = "inline-block";
-      button.title = `Ver.${latest} にアップデート`;
-    } catch (error) {
-      console.warn("[SUUMO JJ] update check skipped:", error);
-    }
+          alertMark.style.display = "inline-flex";
+          alertMark.title = `現在：Ver.${SCRIPT_VERSION}\n最新版：Ver.${latest}\n新しいバージョンがあります`;
+          button.style.display = "inline-block";
+          button.title = `Ver.${latest} にアップデート`;
+        } catch (error) {
+          console.warn("[SUUMO JJ] update check skipped:", error);
+        }
+      },
+      onerror: error => console.warn("[SUUMO JJ] update check failed:", error)
+    });
   }
 
   // SUUMO申告フォームの実HTMLから確認済みの固定入力欄。
