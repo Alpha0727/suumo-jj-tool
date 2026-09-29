@@ -1,5 +1,5 @@
 {
-  "version": "7.26",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.26.user.js",
-  "notes": "GitHub APIの更新確認URLで、追加パラメータの区切りを ? から & に修正しました。"
+  "version": "7.27",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.27.user.js",
+  "notes": "アップデート機能の動作確認用です。機能・動作の変更はありません。"
 }
