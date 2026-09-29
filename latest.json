@@ -1,5 +1,5 @@
 {
-  "version": "7.38",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.38.user.js",
-  "notes": "バックグラウンド自動進行を再設計しました。1秒ごとの常時ウォッチドッグを廃止し、工程(stage)を保存して現在ページと照合する方式へ変更。復帰時は未完了の次工程だけを実行し、前工程の再発火や無限ループを防ぎます。Ver.7.37は復元用バックアップとして保持しています。"
+  "version": "7.39",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.39.user.js",
+  "notes": "設定画面と設定ボタンの名称を「指摘設定」に統一しました。自動進行ロジックはVer.7.38のまま変更していません。"
 }
