@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         SUUMO JJ 一括申告 Ver.7.7
+// @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.8
+// @version      7.9
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・3秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -17,10 +17,10 @@
   'use strict';
 
   const PROFILE = {
-    company: "株式会社エールーム",
-    manager1: "東",
-    tel: "0362401146",
-    email: "a-ueno@arooms.jp",
+    company: GM_getValue("profile_company", "株式会社エールーム"),
+    manager1: GM_getValue("profile_manager1", "東"),
+    tel: normalizePhone(GM_getValue("profile_tel", "0362401146")),
+    email: GM_getValue("profile_email", "a-ueno@arooms.jp"),
     mgmt_company: GM_getValue("mgmt_company", ""),
     mgmt_tel: String(GM_getValue("mgmt_tel", "")).normalize("NFKC").replace(/\D/g, ""),
     manager2: GM_getValue("manager2", ""),
@@ -1074,6 +1074,15 @@
 
     panel.innerHTML = `
       <div style="font-weight:bold;font-size:17px;margin-bottom:10px;">入力設定</div>
+      <details id="tm-basic-settings" style="background:#f5f5f5;border-radius:8px;margin-bottom:12px;">
+        <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;">基本設定</summary>
+        <div style="padding:0 10px 10px;">
+          <div style="margin-bottom:8px;"><div>会社名</div><input id="tm-profile-company" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.company)}"></div>
+          <div style="margin-bottom:8px;"><div>担当者名</div><input id="tm-profile-manager1" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.manager1)}"></div>
+          <div style="margin-bottom:8px;"><div>電話番号</div><input id="tm-profile-tel" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.tel)}"></div>
+          <div><div>メールアドレス</div><input id="tm-profile-email" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.email)}"></div>
+        </div>
+      </details>
       <div style="margin-bottom:8px;"><div>管理会社名</div><input id="tm-mgmt-company" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.mgmt_company)}"></div>
       <div style="margin-bottom:8px;"><div>管理会社TEL</div><input id="tm-mgmt-tel" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.mgmt_tel)}"></div>
       <div style="margin-bottom:8px;"><div>管理会社担当者</div><input id="tm-manager2" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.manager2)}"></div>
@@ -1200,6 +1209,11 @@
         return;
       }
 
+      const profileCompany = document.getElementById("tm-profile-company").value.trim();
+      const profileManager1 = document.getElementById("tm-profile-manager1").value.trim();
+      const profileTel = normalizePhone(document.getElementById("tm-profile-tel").value);
+      const profileEmail = document.getElementById("tm-profile-email").value.trim();
+
       const company = document.getElementById("tm-mgmt-company").value.trim();
       const telInput = document.getElementById("tm-mgmt-tel");
       const tel = normalizePhone(telInput.value);
@@ -1211,6 +1225,12 @@
       const contractOffset = Number(document.getElementById("tm-date-contract").value || 0);
       const confirmOffset = Number(document.getElementById("tm-date-confirm").value || 0);
 
+      GM_setValue("profile_company", profileCompany);
+      GM_setValue("profile_manager1", profileManager1);
+      GM_setValue("profile_tel", profileTel);
+      GM_setValue("profile_email", profileEmail);
+      GM_setValue("profile_initialized", true);
+
       GM_setValue("mgmt_company", company);
       GM_setValue("mgmt_tel", tel);
       GM_setValue("manager2", manager2);
@@ -1219,6 +1239,10 @@
       GM_setValue("date_offset_contract", contractOffset);
       GM_setValue("date_offset_confirm", confirmOffset);
 
+      PROFILE.company = profileCompany;
+      PROFILE.manager1 = profileManager1;
+      PROFILE.tel = profileTel;
+      PROFILE.email = profileEmail;
       PROFILE.mgmt_company = company;
       PROFILE.mgmt_tel = tel;
       PROFILE.manager2 = manager2;
