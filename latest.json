@@ -1,5 +1,5 @@
 {
-  "version": "7.24",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.24.user.js",
-  "notes": "更新確認URLがMarkdown形式に変換されていた問題を修正しました。"
+  "version": "7.25",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.25.user.js",
+  "notes": "アップデート機能の最終動作確認用です。機能・動作の変更はありません。"
 }
