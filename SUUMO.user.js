@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.37
+// @version      7.38
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -44,10 +44,30 @@
     confirmReady: "suumo_batch_confirm_ready",
     error: "suumo_batch_error",
     formReady: "suumo_batch_form_ready",
-    ownerToken: "suumo_batch_owner_token"
+    ownerToken: "suumo_batch_owner_token",
+    stage: "suumo_batch_stage"
   };
 
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
+
+  const STAGES = Object.freeze({
+    LISTING: "listing",
+    INPUT_PREPARING: "input-preparing",
+    INPUT_READY: "input-ready",
+    INPUT_CONFIRM: "input-confirm",
+    SUBMITTING_CONFIRM: "submitting-confirm",
+    SUBMITTING_FINAL: "submitting-final",
+    COMPLETE: "complete"
+  });
+
+  function getBatchStage() {
+    return String(GM_getValue(BATCH_KEYS.stage, STAGES.LISTING) || STAGES.LISTING);
+  }
+
+  function setBatchStage(stage) {
+    GM_setValue(BATCH_KEYS.stage, stage);
+  }
+
 
   function createBatchOwnerToken() {
     return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
@@ -80,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.37";
+  const SCRIPT_VERSION = "7.38";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -367,6 +387,7 @@
     }
 
     formPreparationRunning = true;
+    setBatchStage(STAGES.INPUT_PREPARING);
     GM_setValue(FORM_PREP_ATTEMPTS_KEY, attempts + 1);
 
     try {
@@ -390,6 +411,7 @@
       setBatchError(false);
       setFormReady(true);
       setConfirmReady(false);
+      setBatchStage(STAGES.INPUT_READY);
       GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
       updateBatchPanel();
       toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
@@ -479,6 +501,9 @@
     GM_setValue(BATCH_KEYS.urls, urls);
     GM_setValue(BATCH_KEYS.index, index);
     GM_setValue(BATCH_KEYS.active, true);
+    setBatchStage(STAGES.LISTING);
+    setBatchStage(STAGES.LISTING);
+    setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
@@ -491,6 +516,7 @@
     GM_setValue(BATCH_KEYS.index, 0);
     GM_setValue(BATCH_KEYS.urls, []);
     GM_deleteValue(BATCH_KEYS.ownerToken);
+    GM_deleteValue(BATCH_KEYS.stage);
     clearTabOwnerToken();
     setSubmitting(false);
     setConfirmReady(false);
@@ -790,6 +816,7 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
+    setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
     setFormReady(false);
@@ -810,12 +837,14 @@
     if (!isConfirmReady()) {
       autoActionCancelledPhase = null;
       setConfirmReady(true);
+      setBatchStage(STAGES.INPUT_CONFIRM);
       updateBatchPanel();
       return;
     }
 
     setConfirmReady(false);
     setSubmitting(true);
+    setBatchStage(STAGES.SUBMITTING_CONFIRM);
     updateBatchPanel();
     toast("内容確認画面へ進みます…");
 
@@ -836,7 +865,11 @@
   }
 
   async function handleConfirmPage() {
-    if (!isBatchActive() || !isSubmitting()) return;
+    if (!isBatchActive()) return;
+    const stage = getBatchStage();
+    if (stage !== STAGES.SUBMITTING_CONFIRM && stage !== STAGES.SUBMITTING_FINAL) return;
+    setSubmitting(true);
+    setBatchStage(STAGES.SUBMITTING_FINAL);
     setConfirmReady(false);
     updateBatchPanel();
     toast("確認画面を確認しました。\n送信します…", 1800);
@@ -866,7 +899,11 @@
   }
 
   async function handleCompletePage() {
-    if (!isBatchActive() || !isSubmitting()) return;
+    if (!isBatchActive()) return;
+    const stage = getBatchStage();
+    if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
+    setBatchStage(STAGES.COMPLETE);
+    setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
     toast("申告の送信が完了しました ✓", 1800);
@@ -929,6 +966,7 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
+    setBatchStage(STAGES.LISTING);
     location.href = urls[index];
   }
 
@@ -992,7 +1030,6 @@
   let autoActionPhase = null;
   let autoActionDeadline = 0;
   let autoActionCancelledPhase = null;
-  let backgroundWatchdogTimer = null;
   let watchdogBusy = false;
   let formPreparationRunning = false;
   let confirmSendStarted = false;
@@ -1029,36 +1066,42 @@
     }
   }
 
-  async function runBackgroundWatchdog() {
+  async function reconcileBatchState() {
     if (watchdogBusy || !isBatchActive()) return;
     watchdogBusy = true;
     try {
+      const stage = getBatchStage();
+
       if (isInputPage()) {
-        // フォーム準備はinit側だけが担当。ウォッチドッグから再実行しない。
-        // 準備完了後の2秒自動処理だけを復旧する。
-        if (!isFormReady() || isBatchError()) return;
-        updateBatchPanel();
-        recoverAutoActionIfDue();
-        return;
-      }
-
-      if (isListingPage()) {
-        return;
-      }
-
-      if (isConfirmPage() && isSubmitting() && !confirmSendStarted) {
-        const sendLink = document.querySelector(
-          'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
-        );
-        if (sendLink) {
-          confirmSendStarted = true;
-          sendLink.click();
+        if (stage === STAGES.INPUT_READY || stage === STAGES.INPUT_CONFIRM) {
+          setFormReady(true);
+          setConfirmReady(stage === STAGES.INPUT_CONFIRM);
+          updateBatchPanel();
+          recoverAutoActionIfDue();
         }
         return;
       }
 
-      if (isCompletePage() && isSubmitting()) {
-        goToNextListing();
+      if (isConfirmPage()) {
+        if ((stage === STAGES.SUBMITTING_CONFIRM || stage === STAGES.SUBMITTING_FINAL) && !confirmSendStarted) {
+          setSubmitting(true);
+          setBatchStage(STAGES.SUBMITTING_FINAL);
+          const sendLink = document.querySelector(
+            'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
+          );
+          if (sendLink) {
+            confirmSendStarted = true;
+            sendLink.click();
+          }
+        }
+        return;
+      }
+
+      if (isCompletePage()) {
+        if (stage === STAGES.SUBMITTING_FINAL || stage === STAGES.COMPLETE) {
+          setBatchStage(STAGES.COMPLETE);
+          goToNextListing();
+        }
       }
     } finally {
       watchdogBusy = false;
@@ -1066,10 +1109,8 @@
   }
 
   function startBackgroundWatchdog() {
-    if (backgroundWatchdogTimer) clearInterval(backgroundWatchdogTimer);
-    backgroundWatchdogTimer = setInterval(() => {
-      runBackgroundWatchdog();
-    }, 1000);
+    // 7.38: 常時setInterval監視は廃止。
+    // ブラウザから実行機会が戻ったイベント時だけ状態を照合する。
   }
 
   function startAutoAction(button, phase, strongColor, lightColor) {
@@ -1601,21 +1642,21 @@
     if (!document.hidden) {
       updateBatchPanel();
       recoverAutoActionIfDue();
-      runBackgroundWatchdog();
+      reconcileBatchState();
     }
   });
   window.addEventListener("focus", () => {
     updateBatchPanel();
     recoverAutoActionIfDue();
-    runBackgroundWatchdog();
+    reconcileBatchState();
   });
   window.addEventListener("pageshow", () => {
     updateBatchPanel();
     recoverAutoActionIfDue();
-    runBackgroundWatchdog();
+    reconcileBatchState();
   });
   window.addEventListener("online", () => {
-    runBackgroundWatchdog();
+    reconcileBatchState();
   });
 
   window.addEventListener("keydown", async event => {
@@ -1659,6 +1700,15 @@
         setFormReady(false);
         updateBatchPanel();
         toast("送信が完了せず入力画面へ戻りました。\n入力エラーを確認してください。", 6000);
+        return;
+      }
+
+      const stage = getBatchStage();
+      if (stage === STAGES.INPUT_READY || stage === STAGES.INPUT_CONFIRM) {
+        setFormReady(true);
+        setConfirmReady(stage === STAGES.INPUT_CONFIRM);
+        updateBatchPanel();
+        recoverAutoActionIfDue();
         return;
       }
 
