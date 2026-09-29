@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.33
+// @version      7.34
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -43,11 +43,44 @@
     submitting: "suumo_batch_submitting",
     confirmReady: "suumo_batch_confirm_ready",
     error: "suumo_batch_error",
-    formReady: "suumo_batch_form_ready"
+    formReady: "suumo_batch_form_ready",
+    ownerToken: "suumo_batch_owner_token"
   };
 
+  const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
+
+  function createBatchOwnerToken() {
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
+  }
+
+  function getTabOwnerToken() {
+    try {
+      return sessionStorage.getItem(TAB_OWNER_TOKEN_KEY) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function setTabOwnerToken(token) {
+    try {
+      sessionStorage.setItem(TAB_OWNER_TOKEN_KEY, token);
+    } catch (_) {}
+  }
+
+  function clearTabOwnerToken() {
+    try {
+      sessionStorage.removeItem(TAB_OWNER_TOKEN_KEY);
+    } catch (_) {}
+  }
+
+  function isBatchOwnerTab() {
+    const ownerToken = String(GM_getValue(BATCH_KEYS.ownerToken, "") || "");
+    const tabToken = getTabOwnerToken();
+    return !!ownerToken && !!tabToken && ownerToken === tabToken;
+  }
+
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.33";
+  const SCRIPT_VERSION = "7.34";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -358,6 +391,10 @@
   }
 
   function isBatchActive() {
+    return !!GM_getValue(BATCH_KEYS.active, false) && isBatchOwnerTab();
+  }
+
+  function isAnyBatchActive() {
     return !!GM_getValue(BATCH_KEYS.active, false);
   }
 
@@ -394,6 +431,9 @@
   }
 
   function setBatch(urls, index = 0) {
+    const ownerToken = createBatchOwnerToken();
+    setTabOwnerToken(ownerToken);
+    GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
     GM_setValue(BATCH_KEYS.urls, urls);
     GM_setValue(BATCH_KEYS.index, index);
     GM_setValue(BATCH_KEYS.active, true);
@@ -407,6 +447,8 @@
     GM_setValue(BATCH_KEYS.active, false);
     GM_setValue(BATCH_KEYS.index, 0);
     GM_setValue(BATCH_KEYS.urls, []);
+    GM_deleteValue(BATCH_KEYS.ownerToken);
+    clearTabOwnerToken();
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
