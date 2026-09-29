@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.12
+// @version      7.13
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -44,7 +44,7 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.12";
+  const SCRIPT_VERSION = "7.13";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
 
   function compareVersions(a, b) {
@@ -862,6 +862,8 @@
   }
 
   const AUTO_ACTION_MS = 2000;
+  const AUTO_ACTION_PHASE_KEY = "suumo_auto_action_phase";
+  const AUTO_ACTION_DEADLINE_KEY = "suumo_auto_action_deadline";
   let autoActionTimer = null;
   let autoActionFrame = null;
   let autoActionPhase = null;
@@ -880,6 +882,24 @@
 
     autoActionPhase = null;
     autoActionDeadline = 0;
+    GM_deleteValue(AUTO_ACTION_PHASE_KEY);
+    GM_deleteValue(AUTO_ACTION_DEADLINE_KEY);
+  }
+
+  function recoverAutoActionIfDue() {
+    if (!isBatchActive() || !isInputPage() || isSubmitting() || !isFormReady()) return;
+    const button = document.getElementById("tm-submit-next");
+    if (!button) return;
+
+    const phase = isConfirmReady() ? "confirm-send" : "first-send";
+    const savedPhase = GM_getValue(AUTO_ACTION_PHASE_KEY, "");
+    const savedDeadline = Number(GM_getValue(AUTO_ACTION_DEADLINE_KEY, 0));
+
+    if (savedPhase === phase && savedDeadline && Date.now() >= savedDeadline) {
+      autoActionCancelledPhase = null;
+      cancelAutoAction(false);
+      submitCurrentAndContinue();
+    }
   }
 
   function startAutoAction(button, phase, strongColor, lightColor) {
@@ -893,9 +913,19 @@
 
     // 同じ段階ですでにカウント中なら、描画だけ現在時刻に合わせる。
     if (autoActionPhase !== phase || !autoActionDeadline) {
-      cancelAutoAction(false);
+      if (autoActionTimer) clearTimeout(autoActionTimer);
+      if (autoActionFrame) cancelAnimationFrame(autoActionFrame);
+      autoActionTimer = null;
+      autoActionFrame = null;
+
+      const savedPhase = GM_getValue(AUTO_ACTION_PHASE_KEY, "");
+      const savedDeadline = Number(GM_getValue(AUTO_ACTION_DEADLINE_KEY, 0));
       autoActionPhase = phase;
-      autoActionDeadline = Date.now() + AUTO_ACTION_MS;
+      autoActionDeadline = (savedPhase === phase && savedDeadline)
+        ? savedDeadline
+        : Date.now() + AUTO_ACTION_MS;
+      GM_setValue(AUTO_ACTION_PHASE_KEY, phase);
+      GM_setValue(AUTO_ACTION_DEADLINE_KEY, autoActionDeadline);
 
       // 実行判定はCSSアニメーションではなく実時間。
       // バックグラウンドタブでも、タイマーが実行可能になった時点で経過時間を確認する。
@@ -1372,6 +1402,23 @@
     settings.onclick = openSettings;
     document.body.appendChild(settings);
   }
+
+  // Chromeがバックグラウンドタブを間引いた・休止した場合の復帰処理。
+  // 復帰時に保存済みの実行期限を確認し、期限超過ならその場で続きを実行する。
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      updateBatchPanel();
+      recoverAutoActionIfDue();
+    }
+  });
+  window.addEventListener("focus", () => {
+    updateBatchPanel();
+    recoverAutoActionIfDue();
+  });
+  window.addEventListener("pageshow", () => {
+    updateBatchPanel();
+    recoverAutoActionIfDue();
+  });
 
   window.addEventListener("keydown", async event => {
     if (event.altKey && event.key.toLowerCase() === "j") {
