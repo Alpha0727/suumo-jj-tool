@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.11
-// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・3秒自動送信・折り畳み日付設定対応。
+// @version      7.12
+// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js
@@ -44,7 +44,7 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.11";
+  const SCRIPT_VERSION = "7.12";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
 
   function compareVersions(a, b) {
@@ -861,7 +861,7 @@
     return location.pathname.includes("/jj/chintai/shiryou/FR400FG003/");
   }
 
-  const AUTO_ACTION_MS = 3000;
+  const AUTO_ACTION_MS = 2000;
   let autoActionTimer = null;
   let autoActionFrame = null;
   let autoActionPhase = null;
