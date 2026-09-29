@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.10
+// @version      7.11
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・3秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -44,6 +44,42 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
+  const SCRIPT_VERSION = "7.11";
+  const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
+
+  function compareVersions(a, b) {
+    const aa = String(a).split(".").map(Number);
+    const bb = String(b).split(".").map(Number);
+    const len = Math.max(aa.length, bb.length);
+    for (let i = 0; i < len; i++) {
+      const av = aa[i] || 0;
+      const bv = bb[i] || 0;
+      if (av !== bv) return av > bv ? 1 : -1;
+    }
+    return 0;
+  }
+
+  async function checkScriptUpdate() {
+    const status = document.getElementById("tm-version-status");
+    const alertMark = document.getElementById("tm-update-alert");
+    const button = document.getElementById("tm-update-button");
+    if (!status || !alertMark || !button) return;
+
+    try {
+      const response = await fetch(SCRIPT_URL + "?t=" + Date.now(), { cache: "no-store" });
+      if (!response.ok) throw new Error("update check failed");
+      const source = await response.text();
+      const latest = source.match(/@version\\s+([^\\s]+)/)?.[1];
+      if (!latest || compareVersions(latest, SCRIPT_VERSION) <= 0) return;
+
+      alertMark.style.display = "inline-flex";
+      alertMark.title = `現在：Ver.${SCRIPT_VERSION}\n最新版：Ver.${latest}\n新しいバージョンがあります`;
+      button.style.display = "inline-block";
+      button.title = `Ver.${latest} にアップデート`;
+    } catch (error) {
+      console.warn("[SUUMO JJ] update check skipped:", error);
+    }
+  }
 
   // SUUMO申告フォームの実HTMLから確認済みの固定入力欄。
   // ラベル文字の推測ではなく、各入力欄をIDで直接指定する。
@@ -1114,7 +1150,12 @@
         </div>
       </details>
       <button id="tm-save-setting" style="padding:8px 15px;cursor:pointer;">保存</button>
-      <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;cursor:pointer;">閉じる</button>`;
+      <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;cursor:pointer;">閉じる</button>
+      <div id="tm-version-row" style="margin-top:12px;min-height:26px;display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:11px;color:#b5b5b5;">
+        <span id="tm-version-status">Ver.${SCRIPT_VERSION}</span>
+        <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
+        <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#2f7cf6;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
+      </div>`;
 
     document.body.appendChild(panel);
 
@@ -1254,7 +1295,11 @@
     };
 
     document.getElementById("tm-close-setting").onclick = () => panel.remove();
+    document.getElementById("tm-update-button").onclick = () => {
+      window.open(SCRIPT_URL, "_blank", "noopener,noreferrer");
+    };
     updateHalfWidthWarning();
+    checkScriptUpdate();
   }
 
   function addMainButtons() {
