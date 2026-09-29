@@ -1,5 +1,5 @@
 {
-  "version": "7.37",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.37.user.js",
-  "notes": "申告フォーム準備の無限再試行を廃止しました。必要DOMを待って最大3回だけ準備を試し、失敗時は自動停止して再実行・スキップを選べます。ウォッチドッグはフォーム準備を再実行しません。"
+  "version": "7.38",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.38.user.js",
+  "notes": "バックグラウンド自動進行を再設計しました。1秒ごとの常時ウォッチドッグを廃止し、工程(stage)を保存して現在ページと照合する方式へ変更。復帰時は未完了の次工程だけを実行し、前工程の再発火や無限ループを防ぎます。Ver.7.37は復元用バックアップとして保持しています。"
 }
