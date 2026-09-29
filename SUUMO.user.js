@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.38
+// @version      7.39
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.38";
+  const SCRIPT_VERSION = "7.39";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1350,7 +1350,7 @@
     });
 
     panel.innerHTML = `
-      <div style="font-weight:bold;font-size:17px;margin-bottom:10px;">入力設定</div>
+      <div style="font-weight:bold;font-size:17px;margin-bottom:10px;">指摘設定</div>
       <details id="tm-basic-settings" style="background:#f5f5f5;border-radius:8px;margin-bottom:12px;">
         <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;">基本設定</summary>
         <div style="padding:0 10px 10px;">
@@ -1584,7 +1584,7 @@
     batch.onclick = openCompanySelection;
 
     const settings = document.createElement("button");
-    settings.textContent = "設定";
+    settings.textContent = "指摘設定";
     Object.assign(settings.style, {
       padding: "10px 14px", border: "none", borderRadius: "10px",
       background: "#666", color: "#fff", cursor: "pointer"
@@ -1614,7 +1614,7 @@
 
     const settings = document.createElement("button");
     settings.id = "tm-ielove-settings";
-    settings.textContent = "設定";
+    settings.textContent = "指摘設定";
 
     Object.assign(settings.style, {
       position: "fixed",
