@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.34
+// @version      7.35
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -80,7 +80,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.34";
+  const SCRIPT_VERSION = "7.35";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -722,7 +722,12 @@
     };
   }
 
+  let nextListingStarted = false;
+
   function goToNextListing() {
+    if (nextListingStarted || !isBatchActive()) return;
+    nextListingStarted = true;
+
     const urls = getBatchUrls();
     let index = getBatchIndex();
     index++;
@@ -937,6 +942,8 @@
   let autoActionPhase = null;
   let autoActionDeadline = 0;
   let autoActionCancelledPhase = null;
+  let backgroundWatchdogTimer = null;
+  let watchdogBusy = false;
 
   function cancelAutoAction(rememberPhase = false) {
     if (autoActionTimer) clearTimeout(autoActionTimer);
@@ -968,6 +975,49 @@
       cancelAutoAction(false);
       submitCurrentAndContinue();
     }
+  }
+
+  async function runBackgroundWatchdog() {
+    if (watchdogBusy || !isBatchActive()) return;
+    watchdogBusy = true;
+    try {
+      // 入力画面：期限を過ぎた自動送信を即時回収。
+      if (isInputPage()) {
+        updateBatchPanel();
+        recoverAutoActionIfDue();
+        return;
+      }
+
+      // 掲載ページ：申告リンクが表示済みなのに止まっていたら再開。
+      if (isListingPage()) {
+        const link = document.querySelector("#js-bknToiawaseFr");
+        if (link) link.click();
+        return;
+      }
+
+      // 確認画面：送信状態なら最終送信リンクを再取得して進める。
+      if (isConfirmPage() && isSubmitting()) {
+        const sendLink = document.querySelector(
+          'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
+        );
+        if (sendLink) sendLink.click();
+        return;
+      }
+
+      // 完了画面：完了後の待機タイマーが止まっていても次の物件へ進める。
+      if (isCompletePage() && isSubmitting()) {
+        goToNextListing();
+      }
+    } finally {
+      watchdogBusy = false;
+    }
+  }
+
+  function startBackgroundWatchdog() {
+    if (backgroundWatchdogTimer) clearInterval(backgroundWatchdogTimer);
+    backgroundWatchdogTimer = setInterval(() => {
+      runBackgroundWatchdog();
+    }, 1000);
   }
 
   function startAutoAction(button, phase, strongColor, lightColor) {
@@ -1499,15 +1549,21 @@
     if (!document.hidden) {
       updateBatchPanel();
       recoverAutoActionIfDue();
+      runBackgroundWatchdog();
     }
   });
   window.addEventListener("focus", () => {
     updateBatchPanel();
     recoverAutoActionIfDue();
+    runBackgroundWatchdog();
   });
   window.addEventListener("pageshow", () => {
     updateBatchPanel();
     recoverAutoActionIfDue();
+    runBackgroundWatchdog();
+  });
+  window.addEventListener("online", () => {
+    runBackgroundWatchdog();
   });
 
   window.addEventListener("keydown", async event => {
@@ -1535,6 +1591,7 @@
     addMainButtons();
 
     if (!isBatchActive()) return;
+    startBackgroundWatchdog();
     updateBatchPanel();
 
     if (isListingPage()) {
