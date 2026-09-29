@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.36
+// @version      7.37
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -80,7 +80,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.36";
+  const SCRIPT_VERSION = "7.37";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -342,13 +342,32 @@
     return filledCount;
   }
 
+  async function waitForReportFormDom(timeoutMs = 8000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!isBatchActive() || !isInputPage()) return false;
+      if (document.querySelector("#js-selectGosinkoku")) return true;
+      await sleep(250);
+    }
+    return false;
+  }
+
   async function prepareReportForm(forceRetry = false) {
     if (!isBatchActive() || !isInputPage()) return false;
     if (formPreparationRunning) return false;
-    if (isFormReady() && !forceRetry) return true;
+    if (isFormReady()) return true;
+    if (isBatchError() && !forceRetry) return false;
+
+    const attempts = Number(GM_getValue(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
+    if (attempts >= FORM_PREP_MAX_ATTEMPTS) {
+      setBatchError(true);
+      setFormReady(false);
+      updateBatchPanel();
+      return false;
+    }
 
     formPreparationRunning = true;
-    GM_setValue(FORM_PREP_STARTED_KEY, Date.now());
+    GM_setValue(FORM_PREP_ATTEMPTS_KEY, attempts + 1);
 
     try {
       setFormReady(false);
@@ -356,18 +375,13 @@
       setBatchError(false);
       updateBatchPanel();
 
-      toast(forceRetry ? "申告フォームの準備を再開しています…" : "申告フォームを準備しています…");
-      await sleep(500);
-      if (!isBatchActive() || !isInputPage()) return false;
+      toast(attempts > 0 ? `申告フォームを再確認しています…（${attempts + 1}/${FORM_PREP_MAX_ATTEMPTS}）` : "申告フォームを準備しています…");
+
+      const domReady = await waitForReportFormDom();
+      if (!domReady) throw new Error("申告フォームのDOM待機がタイムアウトしました");
 
       const selected = await selectReportType();
-      if (!selected) {
-        setBatchError(true);
-        setFormReady(false);
-        updateBatchPanel();
-        toast("申告内容の選択欄が見つかりませんでした", 4000);
-        return false;
-      }
+      if (!selected) throw new Error("申告内容の選択欄を準備できませんでした");
 
       await sleep(300);
       if (!isBatchActive() || !isInputPage()) return false;
@@ -376,15 +390,24 @@
       setBatchError(false);
       setFormReady(true);
       setConfirmReady(false);
-      GM_deleteValue(FORM_PREP_STARTED_KEY);
+      GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
       updateBatchPanel();
       toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
       return true;
     } catch (error) {
       console.warn("[SUUMO JJ] form preparation failed:", error);
+      const used = Number(GM_getValue(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
+
+      if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
+        toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
+        await sleep(1000);
+        return await prepareReportForm(true);
+      }
+
       setBatchError(true);
       setFormReady(false);
       updateBatchPanel();
+      toast("申告フォームを準備できませんでした。\n「この物件を再実行」または「スキップ」を選んでください。", 6000);
       return false;
     } finally {
       formPreparationRunning = false;
@@ -460,7 +483,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_STARTED_KEY);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
   }
 
   function clearBatch() {
@@ -473,7 +496,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_STARTED_KEY);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
   }
 
   function getPermanentExcludedCompanies() {
@@ -874,7 +897,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_STARTED_KEY);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
 
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
@@ -926,6 +949,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
     updateBatchPanel();
     toast(`掲載ページ ${index + 1}/${urls.length}\n申告フォームを開きます…`);
 
@@ -961,8 +985,8 @@
   const AUTO_ACTION_MS = 2000;
   const AUTO_ACTION_PHASE_KEY = "suumo_auto_action_phase";
   const AUTO_ACTION_DEADLINE_KEY = "suumo_auto_action_deadline";
-  const FORM_PREP_STARTED_KEY = "suumo_form_prep_started";
-  const FORM_PREP_RETRY_MS = 5000;
+  const FORM_PREP_ATTEMPTS_KEY = "suumo_form_prep_attempts";
+  const FORM_PREP_MAX_ATTEMPTS = 3;
   let autoActionTimer = null;
   let autoActionFrame = null;
   let autoActionPhase = null;
@@ -1010,21 +1034,15 @@
     watchdogBusy = true;
     try {
       if (isInputPage()) {
-        if (!isSubmitting() && !isFormReady()) {
-          const started = Number(GM_getValue(FORM_PREP_STARTED_KEY, 0));
-          if (!formPreparationRunning && (!started || Date.now() - started >= FORM_PREP_RETRY_MS)) {
-            await prepareReportForm(true);
-          }
-          return;
-        }
+        // フォーム準備はinit側だけが担当。ウォッチドッグから再実行しない。
+        // 準備完了後の2秒自動処理だけを復旧する。
+        if (!isFormReady() || isBatchError()) return;
         updateBatchPanel();
         recoverAutoActionIfDue();
         return;
       }
 
       if (isListingPage()) {
-        const link = document.querySelector("#js-bknToiawaseFr");
-        if (link) link.click();
         return;
       }
 
