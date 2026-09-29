@@ -1,5 +1,5 @@
 {
-  "version": "7.36",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.36.user.js",
-  "notes": "バックグラウンド中に申告フォーム準備で停止するケースを自己復旧するよう強化しました。準備中が5秒以上続く場合はフォーム準備を再実行します。全体コードも監査し、確認画面の二重送信競合を防止しました。"
+  "version": "7.37",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.37.user.js",
+  "notes": "申告フォーム準備の無限再試行を廃止しました。必要DOMを待って最大3回だけ準備を試し、失敗時は自動停止して再実行・スキップを選べます。ウォッチドッグはフォーム準備を再実行しません。"
 }
