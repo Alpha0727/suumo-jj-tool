@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.15
+// @version      7.16
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -46,7 +46,7 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.15";
+  const SCRIPT_VERSION = "7.16";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
 
@@ -79,11 +79,13 @@
           if (!latest || compareVersions(latest, SCRIPT_VERSION) <= 0) return;
 
           const notes = String(info.notes || "").trim();
+          const installUrl = String(info.install_url || SCRIPT_URL).trim();
           alertMark.style.display = "inline-flex";
           alertMark.title = `現在：Ver.${SCRIPT_VERSION}\n最新版：Ver.${latest}${notes ? "\n\n" + notes : ""}`;
           button.style.display = "inline-block";
           button.title = `Ver.${latest} にアップデート`;
           button.dataset.latestVersion = latest;
+          button.dataset.installUrl = installUrl;
         } catch (error) {
           console.warn("[SUUMO JJ] version check skipped:", error);
         }
@@ -1338,7 +1340,9 @@
     document.getElementById("tm-close-setting").onclick = () => panel.remove();
     document.getElementById("tm-update-button").onclick = event => {
       const latest = event.currentTarget.dataset.latestVersion || String(Date.now());
-      window.open(SCRIPT_URL + "?install=" + encodeURIComponent(latest) + "&t=" + Date.now(), "_blank", "noopener,noreferrer");
+      const installUrl = event.currentTarget.dataset.installUrl || SCRIPT_URL;
+      const separator = installUrl.includes("?") ? "&" : "?";
+      window.open(installUrl + separator + "install=" + encodeURIComponent(latest) + "&t=" + Date.now(), "_blank", "noopener,noreferrer");
     };
     updateHalfWidthWarning();
     checkScriptUpdate();
