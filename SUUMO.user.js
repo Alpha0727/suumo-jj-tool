@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.27
+// @version      7.28
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -47,7 +47,7 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.27";
+  const SCRIPT_VERSION = "7.28";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1205,12 +1205,18 @@
         `).join("")}
         </div>
       </details>
-      <button id="tm-save-setting" style="padding:8px 15px;cursor:pointer;">保存</button>
-      <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;cursor:pointer;">閉じる</button>
-      <div id="tm-version-row" style="margin-top:12px;min-height:26px;display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:11px;color:#b5b5b5;">
-        <span id="tm-version-status">Ver.${SCRIPT_VERSION}</span>
-        <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
-        <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#2f7cf6;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+        <div>
+          <div>
+            <button id="tm-save-setting" style="padding:8px 15px;cursor:pointer;">保存</button>
+            <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;cursor:pointer;">閉じる</button>
+          </div>
+          <div id="tm-version-status" style="margin-top:7px;padding-left:2px;font-size:11px;color:#b5b5b5;">Ver.${SCRIPT_VERSION}</div>
+        </div>
+        <div id="tm-version-row" style="min-height:26px;display:flex;align-items:center;justify-content:flex-end;gap:7px;">
+          <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
+          <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#2f7cf6;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
+        </div>
       </div>`;
 
     document.body.appendChild(panel);
