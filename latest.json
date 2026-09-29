@@ -1,5 +1,5 @@
 {
-  "version": "7.35",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.35.user.js",
-  "notes": "バックグラウンド実行の復旧処理を強化しました。1秒監視とタブ復帰・ページ再表示・ネット復帰時の再判定を追加し、掲載・入力・確認・完了の各段階で止まった処理を再開します。"
+  "version": "7.36",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.36.user.js",
+  "notes": "バックグラウンド中に申告フォーム準備で停止するケースを自己復旧するよう強化しました。準備中が5秒以上続く場合はフォーム準備を再実行します。全体コードも監査し、確認画面の二重送信競合を防止しました。"
 }
