@@ -1,5 +1,5 @@
 {
-  "version": "7.34",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.34.user.js",
-  "notes": "一括処理を開始したタブだけが自動処理を続行するように変更しました。処理中に別タブでSUUMOを開いても一括処理へ巻き込まれません。"
+  "version": "7.35",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.35.user.js",
+  "notes": "バックグラウンド実行の復旧処理を強化しました。1秒監視とタブ復帰・ページ再表示・ネット復帰時の再判定を追加し、掲載・入力・確認・完了の各段階で止まった処理を再開します。"
 }
