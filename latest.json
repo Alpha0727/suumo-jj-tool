@@ -1,5 +1,5 @@
 {
-  "version": "7.32",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.32.user.js",
-  "notes": "アップデート動作の再テスト用です。機能変更はありません。"
+  "version": "7.33",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.33.user.js",
+  "notes": "設定画面の更新表示を調整しました。「！」をバージョン横へ移動し、アップデートボタンの高さを保存・閉じるボタンに合わせました。"
 }
