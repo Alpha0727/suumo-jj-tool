@@ -1,5 +1,5 @@
 {
-  "version": "7.16",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.16.user.js",
-  "notes": "更新配布をバージョン別URL方式へ変更。Rawキャッシュの影響を避けて確実に最新版を開けるようにしました。"
+  "version": "7.17",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.17.user.js",
+  "notes": "アップデート機能の動作確認用です。機能・動作の変更はありません。"
 }
