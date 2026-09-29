@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.30
+// @version      7.31
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -47,38 +47,9 @@
   };
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.30";
+  const SCRIPT_VERSION = "7.31";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
-  const UPDATE_RETURN_TARGET_KEY = "suumo_update_return_target";
-  const UPDATE_RETURN_RELOADED_KEY = "suumo_update_return_reloaded";
-
-  function markUpdateReturn(targetVersion) {
-    GM_setValue(UPDATE_RETURN_TARGET_KEY, String(targetVersion || ""));
-    GM_setValue(UPDATE_RETURN_RELOADED_KEY, false);
-  }
-
-  function handleUpdateReturn() {
-    const target = String(GM_getValue(UPDATE_RETURN_TARGET_KEY, "") || "").trim();
-    if (!target) return false;
-
-    // 新しいスクリプトでページが読み直された場合は待機状態を終了。
-    if (compareVersions(SCRIPT_VERSION, target) >= 0) {
-      GM_deleteValue(UPDATE_RETURN_TARGET_KEY);
-      GM_deleteValue(UPDATE_RETURN_RELOADED_KEY);
-      return false;
-    }
-
-    // 更新画面から元タブへ戻った最初の1回だけページを再読込する。
-    // 更新をキャンセルした場合でも無限リロードにはならない。
-    if (!GM_getValue(UPDATE_RETURN_RELOADED_KEY, false)) {
-      GM_setValue(UPDATE_RETURN_RELOADED_KEY, true);
-      location.reload();
-      return true;
-    }
-
-    return false;
-  }
 
   function compareVersions(a, b) {
     const aa = String(a).split(".").map(Number);
@@ -1390,8 +1361,20 @@
       const latest = event.currentTarget.dataset.latestVersion || String(Date.now());
       const installUrl = event.currentTarget.dataset.installUrl || SCRIPT_URL;
       const separator = installUrl.includes("?") ? "&" : "?";
-      markUpdateReturn(latest);
-      window.open(installUrl + separator + "install=" + encodeURIComponent(latest) + "&t=" + Date.now(), "_blank", "noopener,noreferrer");
+      const updateWindow = window.open(
+        installUrl + separator + "install=" + encodeURIComponent(latest) + "&t=" + Date.now(),
+        "_blank"
+      );
+
+      // 更新用タブが閉じられたら、元ページを1回だけ再読み込みする。
+      // Tampermonkey側で更新完了後にタブを閉じた場合も、手動で閉じた場合も同じ動作。
+      if (updateWindow) {
+        const watchUpdateWindow = setInterval(() => {
+          if (!updateWindow.closed) return;
+          clearInterval(watchUpdateWindow);
+          location.reload();
+        }, 500);
+      }
     };
     updateHalfWidthWarning();
     checkScriptUpdate();
@@ -1472,18 +1455,15 @@
   // 復帰時に保存済みの実行期限を確認し、期限超過ならその場で続きを実行する。
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      if (handleUpdateReturn()) return;
       updateBatchPanel();
       recoverAutoActionIfDue();
     }
   });
   window.addEventListener("focus", () => {
-    if (handleUpdateReturn()) return;
     updateBatchPanel();
     recoverAutoActionIfDue();
   });
   window.addEventListener("pageshow", () => {
-    if (handleUpdateReturn()) return;
     updateBatchPanel();
     recoverAutoActionIfDue();
   });
@@ -1499,12 +1479,6 @@
   async function init() {
     while (!document.body) await sleep(50);
 
-    // 更新後の再読込で新バージョンになっていれば待機状態を解除する。
-    const updateTarget = String(GM_getValue(UPDATE_RETURN_TARGET_KEY, "") || "").trim();
-    if (updateTarget && compareVersions(SCRIPT_VERSION, updateTarget) >= 0) {
-      GM_deleteValue(UPDATE_RETURN_TARGET_KEY);
-      GM_deleteValue(UPDATE_RETURN_RELOADED_KEY);
-    }
 
     // いえらぶCLOUDでは設定ボタンだけ表示。
     // ここで保存した値は同じTampermonkeyスクリプトの保存領域を使うため、
