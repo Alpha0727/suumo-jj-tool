@@ -1,5 +1,5 @@
 {
-  "version": "7.28",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.28.user.js",
-  "notes": "設定画面のバージョン表示を保存ボタン下へ移動し、更新通知・アップデートボタンを右側へ配置しました。更新機能の動作自体は変更していません。"
+  "version": "7.29",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.29.user.js",
+  "notes": "アップデート画面から元のSUUMO・いえらぶCLOUDタブへ戻った際、ページを1回だけ自動リロードする処理を追加しました。"
 }
