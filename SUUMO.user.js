@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.35
+// @version      7.36
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -80,7 +80,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.35";
+  const SCRIPT_VERSION = "7.36";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -342,34 +342,53 @@
     return filledCount;
   }
 
-  async function prepareReportForm() {
-    // フォーム準備が完了するまでは送信ボタンを押せない状態にする。
-    setFormReady(false);
-    setConfirmReady(false);
-    updateBatchPanel();
+  async function prepareReportForm(forceRetry = false) {
+    if (!isBatchActive() || !isInputPage()) return false;
+    if (formPreparationRunning) return false;
+    if (isFormReady() && !forceRetry) return true;
 
-    toast("申告フォームを準備しています…");
-    await sleep(500);
+    formPreparationRunning = true;
+    GM_setValue(FORM_PREP_STARTED_KEY, Date.now());
 
-    const selected = await selectReportType();
-    if (!selected) {
+    try {
+      setFormReady(false);
+      setConfirmReady(false);
+      setBatchError(false);
+      updateBatchPanel();
+
+      toast(forceRetry ? "申告フォームの準備を再開しています…" : "申告フォームを準備しています…");
+      await sleep(500);
+      if (!isBatchActive() || !isInputPage()) return false;
+
+      const selected = await selectReportType();
+      if (!selected) {
+        setBatchError(true);
+        setFormReady(false);
+        updateBatchPanel();
+        toast("申告内容の選択欄が見つかりませんでした", 4000);
+        return false;
+      }
+
+      await sleep(300);
+      if (!isBatchActive() || !isInputPage()) return false;
+      const count = await autofill(false);
+
+      setBatchError(false);
+      setFormReady(true);
+      setConfirmReady(false);
+      GM_deleteValue(FORM_PREP_STARTED_KEY);
+      updateBatchPanel();
+      toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
+      return true;
+    } catch (error) {
+      console.warn("[SUUMO JJ] form preparation failed:", error);
       setBatchError(true);
       setFormReady(false);
       updateBatchPanel();
-      toast("申告内容の選択欄が見つかりませんでした", 4000);
-      return;
+      return false;
+    } finally {
+      formPreparationRunning = false;
     }
-
-    await sleep(300);
-    const count = await autofill(false);
-
-    // 「申告フォームを準備しました ○項目入力」と出せる段階で初めて操作可能にする。
-    setBatchError(false);
-    setFormReady(true);
-    setConfirmReady(false);
-    updateBatchPanel();
-
-    toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
   }
 
   const BatchState = {
@@ -441,6 +460,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
+    GM_deleteValue(FORM_PREP_STARTED_KEY);
   }
 
   function clearBatch() {
@@ -453,6 +473,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
+    GM_deleteValue(FORM_PREP_STARTED_KEY);
   }
 
   function getPermanentExcludedCompanies() {
@@ -816,6 +837,8 @@
     }
 
     await sleep(500);
+    if (!isBatchActive() || !isConfirmPage() || confirmSendStarted) return;
+    confirmSendStarted = true;
     sendLink.click();
   }
 
@@ -851,6 +874,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
+    GM_deleteValue(FORM_PREP_STARTED_KEY);
 
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
@@ -937,6 +961,8 @@
   const AUTO_ACTION_MS = 2000;
   const AUTO_ACTION_PHASE_KEY = "suumo_auto_action_phase";
   const AUTO_ACTION_DEADLINE_KEY = "suumo_auto_action_deadline";
+  const FORM_PREP_STARTED_KEY = "suumo_form_prep_started";
+  const FORM_PREP_RETRY_MS = 5000;
   let autoActionTimer = null;
   let autoActionFrame = null;
   let autoActionPhase = null;
@@ -944,6 +970,8 @@
   let autoActionCancelledPhase = null;
   let backgroundWatchdogTimer = null;
   let watchdogBusy = false;
+  let formPreparationRunning = false;
+  let confirmSendStarted = false;
 
   function cancelAutoAction(rememberPhase = false) {
     if (autoActionTimer) clearTimeout(autoActionTimer);
@@ -981,30 +1009,36 @@
     if (watchdogBusy || !isBatchActive()) return;
     watchdogBusy = true;
     try {
-      // 入力画面：期限を過ぎた自動送信を即時回収。
       if (isInputPage()) {
+        if (!isSubmitting() && !isFormReady()) {
+          const started = Number(GM_getValue(FORM_PREP_STARTED_KEY, 0));
+          if (!formPreparationRunning && (!started || Date.now() - started >= FORM_PREP_RETRY_MS)) {
+            await prepareReportForm(true);
+          }
+          return;
+        }
         updateBatchPanel();
         recoverAutoActionIfDue();
         return;
       }
 
-      // 掲載ページ：申告リンクが表示済みなのに止まっていたら再開。
       if (isListingPage()) {
         const link = document.querySelector("#js-bknToiawaseFr");
         if (link) link.click();
         return;
       }
 
-      // 確認画面：送信状態なら最終送信リンクを再取得して進める。
-      if (isConfirmPage() && isSubmitting()) {
+      if (isConfirmPage() && isSubmitting() && !confirmSendStarted) {
         const sendLink = document.querySelector(
           'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
         );
-        if (sendLink) sendLink.click();
+        if (sendLink) {
+          confirmSendStarted = true;
+          sendLink.click();
+        }
         return;
       }
 
-      // 完了画面：完了後の待機タイマーが止まっていても次の物件へ進める。
       if (isCompletePage() && isSubmitting()) {
         goToNextListing();
       }
