@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.40
+// @version      7.41
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.40";
+  const SCRIPT_VERSION = "7.41";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1344,15 +1344,15 @@
     panel.id = "tm-setting-panel";
     Object.assign(panel.style, {
       position: "fixed", right: "16px", bottom: "70px", width: "390px",
-      maxWidth: "calc(100vw - 32px)", background: "#fff", border: "1px solid #ccc",
+      maxWidth: "calc(100vw - 32px)", background: "#fff", border: "2px solid #112B3C",
       borderRadius: "12px", padding: "14px", zIndex: "2147483647",
-      boxShadow: "0 5px 18px rgba(0,0,0,.25)"
+      boxShadow: "0 7px 22px rgba(17,43,60,.24)"
     });
 
     panel.innerHTML = `
-      <div style="font-weight:bold;font-size:17px;margin-bottom:10px;">指摘設定</div>
-      <details id="tm-basic-settings" style="background:#f5f5f5;border-radius:8px;margin-bottom:12px;">
-        <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;">基本設定</summary>
+      <div style="margin:-14px -14px 12px;padding:12px 14px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;font-weight:bold;font-size:17px;">指摘設定</div>
+      <details id="tm-basic-settings" style="background:#EEF3F6;border:1px solid #D6E0E6;border-radius:8px;margin-bottom:12px;">
+        <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;color:#112B3C;">基本設定</summary>
         <div style="padding:0 10px 10px;">
           <div style="margin-bottom:8px;"><div>会社名</div><input id="tm-profile-company" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.company)}"></div>
           <div style="margin-bottom:8px;"><div>担当者名</div><input id="tm-profile-manager1" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.manager1)}"></div>
@@ -1372,8 +1372,8 @@
         <button id="tm-convert-fullwidth" type="button" style="padding:8px 11px;border:0;border-radius:7px;background:#d9363e;color:#fff;font-weight:bold;cursor:pointer;">まとめて修正</button>
       </div>
 
-      <details id="tm-date-settings" style="background:#f5f5f5;border-radius:8px;margin-bottom:12px;">
-        <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;">日付設定</summary>
+      <details id="tm-date-settings" style="background:#EEF3F6;border:1px solid #D6E0E6;border-radius:8px;margin-bottom:12px;">
+        <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;color:#112B3C;">日付設定</summary>
         <div style="padding:0 10px 10px;">
           ${[
           ["申込日", "tm-date-apply", DATE_OFFSETS.apply],
@@ -1392,15 +1392,15 @@
       </details>
       <div>
         <div>
-          <button id="tm-save-setting" style="padding:8px 15px;cursor:pointer;">保存</button>
-          <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;cursor:pointer;">閉じる</button>
+          <button id="tm-save-setting" style="padding:8px 15px;border:0;border-radius:7px;background:#112B3C;color:#fff;font-weight:bold;cursor:pointer;">保存</button>
+          <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
         </div>
         <div id="tm-version-row" style="margin-top:7px;padding-left:2px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
           <div style="display:flex;align-items:center;gap:6px;">
             <span id="tm-version-status" style="font-size:11px;color:#b5b5b5;">Ver.${SCRIPT_VERSION}</span>
             <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
           </div>
-          <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#2f7cf6;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
+          <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#112B3C;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
         </div>
       </div>`;
 
