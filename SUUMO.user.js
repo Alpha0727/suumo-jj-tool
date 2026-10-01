@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.43
+// @version      7.44
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.43";
+  const SCRIPT_VERSION = "7.44";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1202,7 +1202,7 @@
       panel = document.createElement("div");
       panel.id = "tm-batch-status";
       Object.assign(panel.style, {
-        position: "fixed", right: "16px", top: "16px", width: "340px",
+        position: "fixed", left: "14px", right: "auto", top: "16px", width: "340px",
         background: "#fff", border: "2px solid #2f7cf6", borderRadius: "14px",
         padding: "14px", zIndex: "2147483647", boxShadow: "0 5px 18px rgba(0,0,0,.25)",
         fontFamily: "sans-serif"
@@ -1401,9 +1401,11 @@
         </div>
       </details>
       <div>
-        <div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="tm-settings-batch" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#e66b00;color:#fff;font-weight:bold;cursor:pointer;">一括処理</button>
+          <button id="tm-settings-autofill" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">自動入力</button>
           <button id="tm-save-setting" style="padding:8px 15px;border:0;border-radius:7px;background:#112B3C;color:#fff;font-weight:bold;cursor:pointer;">保存</button>
-          <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
+          <button id="tm-close-setting" style="padding:8px 15px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
         </div>
 
       </div>`;
@@ -1495,6 +1497,16 @@
       };
     });
 
+    document.getElementById("tm-settings-batch").onclick = () => {
+      panel.remove();
+      openCompanySelection();
+    };
+
+    document.getElementById("tm-settings-autofill").onclick = async () => {
+      if (document.querySelector("#js-selectGosinkoku")) await selectReportType();
+      await autofill();
+    };
+
     document.getElementById("tm-save-setting").onclick = () => {
       if (updateHalfWidthWarning()) {
         toast("入力内容に修正が必要です。\n「まとめて修正」を押してから保存してください。", 4500);
@@ -1576,43 +1588,41 @@
     const box = document.createElement("div");
     box.id = "tm-main-buttons";
     Object.assign(box.style, {
-      position: "fixed", right: "16px", bottom: "16px",
-      zIndex: "2147483646", display: "flex", gap: "7px"
+      position: "fixed",
+      left: "14px",
+      right: "auto",
+      bottom: "16px",
+      zIndex: "2147483646"
     });
-
-    const batch = document.createElement("button");
-    batch.textContent = "一括処理";
-    Object.assign(batch.style, {
-      padding: "10px 14px", border: "none", borderRadius: "10px",
-      background: "#e66b00", color: "#fff", fontWeight: "bold", cursor: "pointer"
-    });
-    batch.onclick = openCompanySelection;
 
     const settings = document.createElement("button");
     settings.textContent = "指摘設定";
     Object.assign(settings.style, {
-      padding: "10px 14px", border: "none", borderRadius: "10px",
-      background: "#666", color: "#fff", cursor: "pointer"
+      width: "120px",
+      height: "36px",
+      padding: "0 14px",
+      border: "none",
+      borderRadius: "10px",
+      background: "#112B3C",
+      color: "#fff",
+      fontSize: "14px",
+      fontWeight: "bold",
+      cursor: "pointer",
+      boxShadow: "0 3px 12px rgba(17,43,60,.28)"
     });
-    settings.onclick = openSettings;
 
-    const fill = document.createElement("button");
-    fill.textContent = "一括入力";
-    Object.assign(fill.style, {
-      padding: "10px 14px", border: "none", borderRadius: "10px",
-      background: "#2f7cf6", color: "#fff", fontWeight: "bold", cursor: "pointer"
-    });
-    fill.onclick = async () => {
-      if (document.querySelector("#js-selectGosinkoku")) await selectReportType();
-      await autofill();
+    settings.onclick = () => {
+      const panel = document.getElementById("tm-setting-panel");
+      if (panel) {
+        panel.remove();
+        return;
+      }
+      openSettings();
     };
 
-    box.appendChild(batch);
     box.appendChild(settings);
-    box.appendChild(fill);
     document.body.appendChild(box);
   }
-
 
   function addIeloveSettingsButton() {
     if (document.getElementById("tm-ielove-settings")) return;
