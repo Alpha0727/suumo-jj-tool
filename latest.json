@@ -1,5 +1,5 @@
 {
-  "version": "7.41",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.41.user.js",
-  "notes": "指摘設定の詳細画面をボタン色 #112B3C に合わせて統一。ヘッダー・枠・保存・更新ボタン・設定セクションの配色を調整しました。機能変更はありません。"
+  "version": "7.42",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.42.user.js",
+  "notes": "指摘設定の見出し横にVer表示を移動し、新版がある時だけ「！」＋アップデートを表示。右上に×を追加し、指摘設定ボタンの再クリックでも詳細画面を閉じられるようにしました。左下3段配置にも対応。"
 }
