@@ -1,5 +1,5 @@
 {
-  "version": "7.42",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.42.user.js",
-  "notes": "指摘設定の見出し横にVer表示を移動し、新版がある時だけ「！」＋アップデートを表示。右上に×を追加し、指摘設定ボタンの再クリックでも詳細画面を閉じられるようにしました。左下3段配置にも対応。"
+  "version": "7.43",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.43.user.js",
+  "notes": "指摘設定ボタンの間隔を調整し、詳細画面を左下のボタン群の真上へ移動しました。スポット詳細と重ならない配置にしています。"
 }
