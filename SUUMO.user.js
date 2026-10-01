@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.42
+// @version      7.43
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.42";
+  const SCRIPT_VERSION = "7.43";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1343,7 +1343,7 @@
     const panel = document.createElement("div");
     panel.id = "tm-setting-panel";
     Object.assign(panel.style, {
-      position: "fixed", right: "16px", bottom: "70px", width: "390px",
+      position: "fixed", left: "14px", right: "auto", bottom: "144px", width: "390px",
       maxWidth: "calc(100vw - 32px)", background: "#fff", border: "2px solid #112B3C",
       borderRadius: "12px", padding: "14px", zIndex: "2147483647",
       boxShadow: "0 7px 22px rgba(17,43,60,.24)"
@@ -1625,7 +1625,7 @@
       position: "fixed",
       left: "14px",
       right: "auto",
-      bottom: "94px",
+      bottom: "100px",
       width: "120px",
       height: "36px",
       zIndex: "2147483646",
