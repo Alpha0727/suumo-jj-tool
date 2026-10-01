@@ -1,5 +1,5 @@
 {
-  "version": "7.43",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.43.user.js",
-  "notes": "指摘設定ボタンの間隔を調整し、詳細画面を左下のボタン群の真上へ移動しました。スポット詳細と重ならない配置にしています。"
+  "version": "7.44",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.44.user.js",
+  "notes": "SUUMO側は指摘設定ボタンだけを左下表示に変更。一括処理と一括入力を設定画面内へ移し、一括入力は自動入力へ名称変更。ボタン順を一括処理→自動入力→保存→閉じるに統一し、一括処理中の進行パネルも左上へ移動しました。"
 }
