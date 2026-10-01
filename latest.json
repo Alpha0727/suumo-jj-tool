@@ -1,5 +1,5 @@
 {
-  "version": "7.40",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.40.user.js",
-  "notes": "いえらぶ側の「指摘設定」ボタンをA案の濃紺 #112B3C に変更しました。自動処理ロジックは変更していません。"
+  "version": "7.41",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.41.user.js",
+  "notes": "指摘設定の詳細画面をボタン色 #112B3C に合わせて統一。ヘッダー・枠・保存・更新ボタン・設定セクションの配色を調整しました。機能変更はありません。"
 }
