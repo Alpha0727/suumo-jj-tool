@@ -1350,7 +1350,17 @@
     });
 
     panel.innerHTML = `
-      <div style="margin:-14px -14px 12px;padding:12px 14px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;font-weight:bold;font-size:17px;">指摘設定</div>
+      <div style="margin:-14px -14px 12px;padding:11px 12px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+          <div style="font-weight:bold;font-size:17px;white-space:nowrap;">指摘設定</div>
+          <span id="tm-version-status" style="font-size:11px;color:#DDE7EC;white-space:nowrap;">Ver.${SCRIPT_VERSION}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
+          <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#F4F7F8;color:#112B3C;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
+          <button id="tm-close-setting-top" type="button" style="border:none;background:transparent;color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:0 2px;">×</button>
+        </div>
+      </div>
       <details id="tm-basic-settings" style="background:#EEF3F6;border:1px solid #D6E0E6;border-radius:8px;margin-bottom:12px;">
         <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;color:#112B3C;">基本設定</summary>
         <div style="padding:0 10px 10px;">
@@ -1395,13 +1405,7 @@
           <button id="tm-save-setting" style="padding:8px 15px;border:0;border-radius:7px;background:#112B3C;color:#fff;font-weight:bold;cursor:pointer;">保存</button>
           <button id="tm-close-setting" style="padding:8px 15px;margin-left:6px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
         </div>
-        <div id="tm-version-row" style="margin-top:7px;padding-left:2px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span id="tm-version-status" style="font-size:11px;color:#b5b5b5;">Ver.${SCRIPT_VERSION}</span>
-            <span id="tm-update-alert" style="display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#f0a000;color:#fff;font-weight:bold;font-size:12px;cursor:help;">!</span>
-          </div>
-          <button id="tm-update-button" type="button" style="display:none;padding:5px 9px;border:0;border-radius:6px;background:#112B3C;color:#fff;font-size:11px;font-weight:bold;cursor:pointer;">アップデート</button>
-        </div>
+
       </div>`;
 
     document.body.appendChild(panel);
@@ -1542,6 +1546,7 @@
     };
 
     document.getElementById("tm-close-setting").onclick = () => panel.remove();
+    document.getElementById("tm-close-setting-top").onclick = () => panel.remove();
     document.getElementById("tm-update-button").onclick = event => {
       const latest = event.currentTarget.dataset.latestVersion || String(Date.now());
       const installUrl = event.currentTarget.dataset.installUrl || SCRIPT_URL;
@@ -1635,7 +1640,14 @@
       boxShadow: "0 3px 12px rgba(17,43,60,.28)"
     });
 
-    settings.onclick = openSettings;
+    settings.onclick = () => {
+      const panel = document.getElementById("tm-setting-panel");
+      if (panel) {
+        panel.remove();
+        return;
+      }
+      openSettings();
+    };
     document.body.appendChild(settings);
   }
 
