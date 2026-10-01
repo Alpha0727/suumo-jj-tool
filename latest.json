@@ -1,5 +1,5 @@
 {
-  "version": "7.39",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.39.user.js",
-  "notes": "設定画面と設定ボタンの名称を「指摘設定」に統一しました。自動進行ロジックはVer.7.38のまま変更していません。"
+  "version": "7.40",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.40.user.js",
+  "notes": "いえらぶ側の「指摘設定」ボタンをA案の濃紺 #112B3C に変更しました。自動処理ロジックは変更していません。"
 }
