@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.39
+// @version      7.40
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.39";
+  const SCRIPT_VERSION = "7.40";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
 
@@ -1624,12 +1624,12 @@
       padding: "11px 18px",
       border: "none",
       borderRadius: "10px",
-      background: "#666",
+      background: "#112B3C",
       color: "#fff",
       fontSize: "14px",
       fontWeight: "bold",
       cursor: "pointer",
-      boxShadow: "0 3px 12px rgba(0,0,0,.22)"
+      boxShadow: "0 3px 12px rgba(17,43,60,.28)"
     });
 
     settings.onclick = openSettings;
