@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.45
+// @version      7.46
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.45";
+  const SCRIPT_VERSION = "7.46";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -1395,7 +1395,7 @@
     });
 
     panel.innerHTML = `
-      <div style="margin:-14px -14px 12px;padding:11px 12px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div id="tm-setting-drag-handle" style="margin:-14px -14px 12px;padding:11px 12px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:move;user-select:none;touch-action:none;">
         <div style="display:flex;align-items:center;gap:8px;min-width:0;">
           <div style="font-weight:bold;font-size:17px;white-space:nowrap;">指摘設定</div>
           <span id="tm-version-status" style="font-size:11px;color:#DDE7EC;white-space:nowrap;">Ver.${SCRIPT_VERSION}</span>
@@ -1456,6 +1456,114 @@
       </div>`;
 
     document.body.appendChild(panel);
+
+    // =========================================================
+    // 指摘設定パネル：ドラッグ移動
+    // ・ヘッダー帯を掴んだ時だけ移動
+    // ・位置は保存しない
+    // ・SUUMO / いえらぶ間で共有しない
+    // ・リロードや再生成で初期位置へ戻る
+    // =========================================================
+    const dragHandle =
+      document.getElementById("tm-setting-drag-handle");
+
+    if (dragHandle) {
+      let dragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startLeft = 0;
+      let startTop = 0;
+      let activePointerId = null;
+
+      const clamp = (value, min, max) =>
+        Math.min(Math.max(value, min), max);
+
+      dragHandle.addEventListener("pointerdown", event => {
+        // × / アップデート等の操作はドラッグ扱いにしない
+        if (
+          event.target.closest(
+            "button, a, input, select, textarea, #tm-update-alert"
+          )
+        ) {
+          return;
+        }
+
+        if (event.button !== undefined && event.button !== 0) {
+          return;
+        }
+
+        const rect = panel.getBoundingClientRect();
+
+        dragging = true;
+        activePointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        panel.style.left = rect.left + "px";
+        panel.style.top = rect.top + "px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+
+        try {
+          dragHandle.setPointerCapture(event.pointerId);
+        } catch {}
+
+        event.preventDefault();
+      });
+
+      dragHandle.addEventListener("pointermove", event => {
+        if (
+          !dragging ||
+          event.pointerId !== activePointerId
+        ) {
+          return;
+        }
+
+        const dx = event.clientX - startX;
+        const dy = event.clientY - startY;
+
+        const rect = panel.getBoundingClientRect();
+        const maxLeft =
+          Math.max(0, window.innerWidth - rect.width);
+        const maxTop =
+          Math.max(0, window.innerHeight - rect.height);
+
+        panel.style.left =
+          clamp(startLeft + dx, 0, maxLeft) + "px";
+
+        panel.style.top =
+          clamp(startTop + dy, 0, maxTop) + "px";
+      });
+
+      const finishDrag = event => {
+        if (
+          !dragging ||
+          event.pointerId !== activePointerId
+        ) {
+          return;
+        }
+
+        dragging = false;
+
+        try {
+          dragHandle.releasePointerCapture(event.pointerId);
+        } catch {}
+
+        activePointerId = null;
+      };
+
+      dragHandle.addEventListener(
+        "pointerup",
+        finishDrag
+      );
+
+      dragHandle.addEventListener(
+        "pointercancel",
+        finishDrag
+      );
+    }
 
     const checkTargets = [
       { id: "tm-mgmt-company", label: "管理会社名", type: "fullwidth" },
