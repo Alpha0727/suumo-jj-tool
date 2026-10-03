@@ -1,5 +1,5 @@
 {
-  "version": "7.45",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.45.user.js",
-  "notes": "更新確認を強化。GitHub APIで確認できない場合はrawのlatest.jsonへ自動切替する二重チェックを追加しました。"
+  "version": "7.46",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.46.user.js",
+  "notes": "指摘設定の上部ヘッダー帯をドラッグして自由に移動できるようにしました。位置は保存せず、SUUMO/いえらぶ間でも共有しません。リロード時は初期位置に戻ります。"
 }
