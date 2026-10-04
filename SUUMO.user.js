@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.46
+// @version      7.47
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.46";
+  const SCRIPT_VERSION = "7.47";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -1389,13 +1389,15 @@
     panel.id = "tm-setting-panel";
     Object.assign(panel.style, {
       position: "fixed", left: "14px", right: "auto", bottom: "144px", width: "390px",
-      maxWidth: "calc(100vw - 32px)", background: "#fff", border: "2px solid #112B3C",
+      maxWidth: "calc(100vw - 32px)", maxHeight: "calc(100vh - 158px)",
+      background: "#fff", border: "2px solid #112B3C",
       borderRadius: "12px", padding: "14px", zIndex: "2147483647",
-      boxShadow: "0 7px 22px rgba(17,43,60,.24)"
+      boxShadow: "0 7px 22px rgba(17,43,60,.24)",
+      boxSizing: "border-box", display: "flex", flexDirection: "column", overflow: "hidden"
     });
 
     panel.innerHTML = `
-      <div id="tm-setting-drag-handle" style="margin:-14px -14px 12px;padding:11px 12px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:move;user-select:none;touch-action:none;">
+      <div id="tm-setting-drag-handle" style="margin:-14px -14px 12px;padding:11px 12px;background:#112B3C;color:#fff;border-radius:9px 9px 0 0;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:move;user-select:none;touch-action:none;flex-shrink:0;">
         <div style="display:flex;align-items:center;gap:8px;min-width:0;">
           <div style="font-weight:bold;font-size:17px;white-space:nowrap;">指摘設定</div>
           <span id="tm-version-status" style="font-size:11px;color:#DDE7EC;white-space:nowrap;">Ver.${SCRIPT_VERSION}</span>
@@ -1406,6 +1408,7 @@
           <button id="tm-close-setting-top" type="button" style="border:none;background:transparent;color:#fff;font-size:20px;line-height:1;cursor:pointer;padding:0 2px;">×</button>
         </div>
       </div>
+      <div id="tm-setting-scroll" style="flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:2px;">
       <details id="tm-basic-settings" style="background:#EEF3F6;border:1px solid #D6E0E6;border-radius:8px;margin-bottom:12px;">
         <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;color:#112B3C;">基本設定</summary>
         <div style="padding:0 10px 10px;">
@@ -1445,7 +1448,8 @@
         `).join("")}
         </div>
       </details>
-      <div>
+      </div>
+      <div id="tm-setting-footer" style="flex-shrink:0;margin:12px -14px -14px;padding:10px 14px 14px;background:#fff;border-top:1px solid #D6E0E6;">
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button id="tm-settings-batch" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#e66b00;color:#fff;font-weight:bold;cursor:pointer;">一括処理</button>
           <button id="tm-settings-autofill" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">自動入力</button>
@@ -1456,6 +1460,37 @@
       </div>`;
 
     document.body.appendChild(panel);
+
+    // 画面サイズ・ブラウザ拡大率が変わっても、
+    // パネルが画面外へ飛び出さないよう補正する。
+    const fitSettingPanelToViewport = () => {
+      panel.style.maxHeight = "calc(100vh - 20px)";
+
+      const rect = panel.getBoundingClientRect();
+      const gap = 10;
+
+      // 初期位置（bottom基準）の間は、下の起動ボタンを避けた高さに制限
+      if (panel.style.bottom !== "auto") {
+        panel.style.maxHeight = "calc(100vh - 158px)";
+        return;
+      }
+
+      const maxLeft = Math.max(gap, window.innerWidth - rect.width - gap);
+      const maxTop = Math.max(gap, window.innerHeight - rect.height - gap);
+
+      panel.style.left =
+        Math.min(Math.max(rect.left, gap), maxLeft) + "px";
+
+      panel.style.top =
+        Math.min(Math.max(rect.top, gap), maxTop) + "px";
+    };
+
+    window.addEventListener(
+      "resize",
+      fitSettingPanelToViewport
+    );
+
+    fitSettingPanelToViewport();
 
     // =========================================================
     // 指摘設定パネル：ドラッグ移動
