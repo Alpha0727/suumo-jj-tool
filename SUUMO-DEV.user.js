@@ -383,7 +383,8 @@
     let filledCount = 0;
 
     for (const [key, selector] of Object.entries(FIELDS)) {
-      const value = PROFILE[key];
+      const override = activeIeloveProfile();
+      const value = override && Object.prototype.hasOwnProperty.call(override, key) ? override[key] : PROFILE[key];
       if (value == null || String(value).trim() === "") continue;
 
       const el = document.querySelector(selector);
@@ -451,7 +452,11 @@
 
       await sleep(300);
       if (!isBatchActive() || !isInputPage()) return false;
+      const currentProfile = activeIeloveProfile();
+      if (getIeloveExecution() && !currentIeloveExecutionItem()) throw new Error("物件ごとの申告情報と掲載URLが一致しません");
+      if (currentProfile && validateIeloveProfile(currentProfile)) throw new Error("必要項目が不足：" + validateIeloveProfile(currentProfile));
       const count = await autofill(false);
+      if (currentProfile && ieloveFormMismatch(currentProfile)) throw new Error("入力結果が一致しません：" + ieloveFormMismatch(currentProfile));
 
       setBatchError(false);
       setFormReady(true);
@@ -539,7 +544,8 @@
     GM_setValue(BATCH_KEYS.formReady, !!value);
   }
 
-  function setBatch(urls, index = 0) {
+  function setBatch(urls, index = 0, source = "regular") {
+    if (source !== "ielove") GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -879,6 +885,21 @@
       return;
     }
 
+    const context = currentIeloveExecutionItem();
+    if (getIeloveExecution() && !context) {
+      setBatchError(true);
+      setFormReady(false);
+      updateBatchPanel();
+      toast("物件と申告データの対応を確認できません。処理を停止しました。", 6000);
+      return;
+    }
+    if (context && (validateIeloveProfile(context.profile) || ieloveFormMismatch(context.profile))) {
+      setBatchError(true);
+      setFormReady(false);
+      updateBatchPanel();
+      toast("物件ごとの管理会社情報が一致しません。送信を停止しました。", 6000);
+      return;
+    }
     if (!isConfirmReady()) {
       autoActionCancelledPhase = null;
       setConfirmReady(true);
@@ -2139,6 +2160,17 @@
     state.items[index].updatedAt = Date.now();
     GM_setValue(IELOVE_BATCH_EXECUTION_KEY, state);
   }
+  function ieloveFormMismatch(profile) {
+    const mismatched = [];
+    for (const [key,label] of [["mgmt_company","管理会社名"],["mgmt_tel","管理会社TEL"],["manager2","管理会社担当者"],["room","号室"]]) {
+      const el = document.querySelector(FIELDS[key]);
+      const actual = String(el?.value || "").trim();
+      const expected = String(profile?.[key] || "").trim();
+      if (!el || (key === "mgmt_tel" ? normalizePhone(actual) !== normalizePhone(expected) : actual !== expected)) mismatched.push(label);
+    }
+    return mismatched.join("・");
+  }
+
   function blockUncertainIeloveResend() {
     const item = currentIeloveExecutionItem();
     if (!item || item.status !== "sending") return false;
@@ -2209,7 +2241,7 @@
     if (!confirm(handoff.records.length + "物件から" + items.length + "掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
     GM_setValue(IELOVE_BATCH_EXECUTION_KEY, { items, startedAt:Date.now(), finishedAt:null });
     GM_deleteValue(IELOVE_SUUMO_HANDOFF_KEY);
-    setBatch(items.map(item => item.url), 0);
+    setBatch(items.map(item => item.url), 0, "ielove");
     location.href = items[0].url;
   }
 
