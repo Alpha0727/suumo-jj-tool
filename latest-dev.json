@@ -1,5 +1,5 @@
 {
-  "version": "7.52.3",
+  "version": "7.52.4",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "日付設定に『記入しない』を追加。申込日・成約日は未記入、確認日は今日をデフォルトに変更。今回のアップデートで既存の日付設定を一度だけ初期化。"
+  "notes": "上位版の表示名を『SUUMO JJ 一括申告 上位版』に変更。機能と更新URL・保存データの識別情報は維持。"
 }
