@@ -2240,12 +2240,12 @@
       list.appendChild(empty);
     }
     const foot = document.createElement("div");
-    foot.style.cssText = "padding:14px 18px;border-top:1px solid #ddd;background:#fafafa;display:flex;gap:8px;flex-wrap:wrap";
+    foot.style.cssText = "padding:14px 18px;border-top:1px solid #ddd;background:#fafafa;display:flex;gap:8px;flex-wrap:nowrap;width:100%;box-sizing:border-box";
     const makeButton = (label, primary, fn) => {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = label;
-      button.style.cssText = "padding:10px 14px;border:1px solid #ccd3da;border-radius:8px;cursor:pointer;font-weight:bold;" +
+      button.style.cssText = "flex:1 1 0;min-width:0;padding:12px 6px;border:1px solid #ccd3da;border-radius:8px;cursor:pointer;font-weight:bold;font-size:13px;white-space:nowrap;" +
         (primary ? "background:#205375;color:#fff;border:0" : "background:#fff");
       button.onclick = fn;
       foot.appendChild(button);
