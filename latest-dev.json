@@ -1,5 +1,5 @@
 {
-  "version": "7.48.0",
+  "version": "7.48.1",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "開発専用初期版（Ver.7.47ベース）。一般配布版は変更なし。"
+  "notes": "開発版 Ver.7.48.1：SUUMO検索条件の取得・不足項目表示を修正。一般配布版は変更なし。"
 }
