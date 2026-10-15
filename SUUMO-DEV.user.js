@@ -391,18 +391,16 @@
   }
 
   async function selectReportType() {
-    const select = document.querySelector("#js-selectGosinkoku");
+    const select = await waitForReadyElement("#js-selectGosinkoku", 8000);
     if (!select) return false;
     setNative(select, "1");
-    await sleep(200);
-    const radio = document.querySelector("#tashaKanri");
+    const radio = await waitForReadyElement("#tashaKanri", 5000);
     if (!radio) return false;
     radio.checked = true;
     try { radio.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
     try { radio.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
     try { radio.dispatchEvent(new Event("click", { bubbles: true })); } catch {}
-    await sleep(250);
-    return true;
+    return !!(await waitForReadyElement(FIELDS.mgmt_company, 5000, isVisibleEditable));
   }
 
   // 日付入力で開いたカレンダーを閉じる（入力値や日付設定は変更しない）。
@@ -423,7 +421,6 @@
   }
 
   async function autofill(showToast = true) {
-    await sleep(100);
 
     let filledCount = 0;
 
@@ -457,13 +454,8 @@
   }
 
   async function waitForReportFormDom(timeoutMs = 8000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (!isBatchActive() || !isInputPage()) return false;
-      if (document.querySelector("#js-selectGosinkoku")) return true;
-      await sleep(250);
-    }
-    return false;
+    if (!isBatchActive() || !isInputPage()) return false;
+    return !!(await waitForReadyElement("#js-selectGosinkoku", timeoutMs));
   }
 
   async function prepareReportForm(forceRetry = false) {
@@ -498,7 +490,6 @@
       const selected = await selectReportType();
       if (!selected) throw new Error("申告内容の選択欄を準備できませんでした");
 
-      await sleep(100);
       if (!isBatchActive() || !isInputPage()) return false;
       const currentProfile = activeIeloveProfile();
       if (getIeloveExecution() && !currentIeloveExecutionItem()) throw new Error("物件ごとの申告情報と掲載URLが一致しません");
