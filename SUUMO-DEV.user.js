@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.51.3
+// @version      7.51.4
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51.3";
+  const SCRIPT_VERSION = "7.51.4";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1534,6 +1534,23 @@
 
     document.body.appendChild(panel);
 
+    // いえらぶ通常画面では3ボタンを幅いっぱいに均等配置する。
+    if (location.hostname === "cloud.ielove.jp") {
+      const footerRow = panel.querySelector("#tm-setting-footer > div");
+      if (footerRow) {
+        footerRow.style.flexWrap = "nowrap";
+        footerRow.style.width = "100%";
+        for (const id of ["tm-ielove-batch-get", "tm-save-setting", "tm-close-setting"]) {
+          const button = panel.querySelector("#" + id);
+          if (!button) continue;
+          button.style.flex = "1 1 0";
+          button.style.minWidth = "0";
+          button.style.padding = "9px 5px";
+          button.style.whiteSpace = "nowrap";
+        }
+      }
+    }
+
     // 画面サイズ・ブラウザ拡大率が変わっても、
     // パネルが画面外へ飛び出さないよう補正する。
     const fitSettingPanelToViewport = () => {
@@ -1723,6 +1740,7 @@
       return true;
     }
 
+    panel.updateIeloveWarning = updateHalfWidthWarning;
     for (const target of checkTargets) {
       document.getElementById(target.id)?.addEventListener("input", updateHalfWidthWarning);
     }
@@ -1930,6 +1948,7 @@
     document.getElementById("tm-ielove-batch-progress").textContent = (index+1) + " / " + draft.records.length + "件";
     document.getElementById("tm-ielove-batch-meta").style.display = "none";
     for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = field === "room" ? String(item[field] || "").replace(/（非公開）|\(非公開\)/g, "").trim() : (item[field] || "");
+    document.getElementById("tm-setting-panel")?.updateIeloveWarning?.();
     document.getElementById("tm-ielove-prev").disabled = index === 0;
     document.getElementById("tm-ielove-next").textContent = index === draft.records.length - 1 ? "指摘 →" : "次へ →";
   }
@@ -2058,6 +2077,7 @@
       for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = ieloveNormalSnapshot[field] || "";
       ieloveNormalSnapshot = null;
     }
+    document.getElementById("tm-setting-panel")?.updateIeloveWarning?.();
   }
   function showIeloveBatchDraft(records) {
     activateIeloveBatchEditor(GM_getValue(IELOVE_BATCH_DRAFT_KEY, null));
