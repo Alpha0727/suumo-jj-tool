@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.51.1
+// @version      7.51.2
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51.1";
+  const SCRIPT_VERSION = "7.51.2";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1940,9 +1940,11 @@
     document.getElementById("tm-ielove-batch-get").style.display = "none";
     const footerRow = document.querySelector("#tm-setting-footer > div");
     if (footerRow) {
+      if (!footerRow.dataset.ieloveOriginalStyle) footerRow.dataset.ieloveOriginalStyle = footerRow.getAttribute("style") || " ";
       footerRow.style.flexWrap = "nowrap";
       footerRow.style.gap = "4px";
       for (const button of footerRow.querySelectorAll("button")) {
+        if (!button.hasAttribute("data-ielove-original-style")) button.setAttribute("data-ielove-original-style", button.getAttribute("style") || "");
         button.style.padding = "8px 5px";
         button.style.fontSize = "12px";
         button.style.whiteSpace = "nowrap";
@@ -2022,14 +2024,15 @@
     document.getElementById("tm-ielove-batch-heading").style.display = "none";
     const footerRow = document.querySelector("#tm-setting-footer > div");
     if (footerRow) {
-      footerRow.style.flexWrap = "wrap";
-      footerRow.style.gap = "6px";
+      if (footerRow.dataset.ieloveOriginalStyle) {
+        footerRow.setAttribute("style", footerRow.dataset.ieloveOriginalStyle.trim());
+        delete footerRow.dataset.ieloveOriginalStyle;
+      }
       for (const button of footerRow.querySelectorAll("button")) {
-        button.style.padding = "";
-        button.style.fontSize = "";
-        button.style.whiteSpace = "";
-        button.style.flex = "";
-        button.style.minWidth = "";
+        if (button.hasAttribute("data-ielove-original-style")) {
+          button.setAttribute("style", button.getAttribute("data-ielove-original-style"));
+          button.removeAttribute("data-ielove-original-style");
+        }
       }
     }
     document.getElementById("tm-ielove-batch-get").style.display = "";
