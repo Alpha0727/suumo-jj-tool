@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.52.1
+// @version      7.52.2
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.52.1";
+  const SCRIPT_VERSION = "7.52.2";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1489,6 +1489,18 @@
       .replace(/[\uFF61-\uFF9F]+/g, text => text.normalize("NFKC"));
   }
 
+  function closeSettingsPanel() {
+    const panel = document.getElementById("tm-setting-panel");
+    if (!panel) return;
+    if (location.hostname === "cloud.ielove.jp" &&
+        panel.querySelector("#tm-ielove-batch-heading")?.style.display !== "none") {
+      // 入力は保存するが、一括添削モードと一時的な表示状態を初期化。
+      exitIeloveBatchEditor();
+    }
+    ieloveNormalSnapshot = null;
+    panel.remove();
+  }
+
   function openSettings() {
     document.getElementById("tm-setting-panel")?.remove();
 
@@ -1827,10 +1839,9 @@
 
     const ieloveGetButton = document.getElementById("tm-ielove-batch-get");
     if (ieloveGetButton) ieloveGetButton.onclick = () => startIeloveBatchGet(ieloveGetButton);
-    if (ieloveGetButton) {
-      const draft = GM_getValue(IELOVE_BATCH_DRAFT_KEY, null);
-      if (draft && Array.isArray(draft.records) && draft.records.length) activateIeloveBatchEditor(draft);
-    }
+    // 開き直した時は必ず通常画面。一括添削の下書きは保存しておくが自動復元しない。
+    // 一括取得ボタンで新しい作業を開始できる。
+
 
     document.getElementById("tm-save-setting").onclick = () => {
       if (location.hostname === "cloud.ielove.jp" && document.getElementById("tm-ielove-batch-heading")?.style.display !== "none") {
@@ -1887,8 +1898,8 @@
       toast("設定を保存しました ✓");
     };
 
-    document.getElementById("tm-close-setting").onclick = () => panel.remove();
-    document.getElementById("tm-close-setting-top").onclick = () => panel.remove();
+    document.getElementById("tm-close-setting").onclick = closeSettingsPanel;
+    document.getElementById("tm-close-setting-top").onclick = closeSettingsPanel;
     document.getElementById("tm-update-button").onclick = event => {
       const latest = event.currentTarget.dataset.latestVersion || String(Date.now());
       const installUrl = event.currentTarget.dataset.installUrl || SCRIPT_URL;
@@ -2456,7 +2467,7 @@
     settings.onclick = () => {
       const panel = document.getElementById("tm-setting-panel");
       if (panel) {
-        panel.remove();
+        closeSettingsPanel();
         return;
       }
       openSettings();
@@ -2495,7 +2506,7 @@
     settings.onclick = () => {
       const panel = document.getElementById("tm-setting-panel");
       if (panel) {
-        panel.remove();
+        closeSettingsPanel();
         return;
       }
       openSettings();
