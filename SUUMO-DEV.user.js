@@ -2163,6 +2163,33 @@
     return [...map.values()];
   }
 
+  // 検索結果が確定した0社だけ自動スキップし、読み込み失敗は保留する。
+  function hasConfirmedEmptyIeloveSearch() {
+    if (!isIeloveSuumoSearchPage() || document.readyState !== "complete") return false;
+    if (getIeloveSearchCompanies().length) return false;
+    const cards = [...document.querySelectorAll(".property-body")];
+    const text = document.body?.innerText || "";
+    const noResults = /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?0件|該当物件(?:は)?0件/.test(text);
+    const noCompany = cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'));
+    return noResults || noCompany;
+  }
+  async function autoSkipEmptyIeloveSearch() {
+    if (!hasConfirmedEmptyIeloveSearch()) return false;
+    await sleep(350);
+    if (!hasConfirmedEmptyIeloveSearch()) return false;
+    const handoff = getIeloveHandoff();
+    if (!handoff || isBatchActive()) return false;
+    const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
+    if (new URL(location.href).searchParams.get("fw") !== new URL(handoff.searches[index].url).searchParams.get("fw")) return false;
+    const selections = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+    selections[index] = { __companies: [], __emptyResult: true };
+    GM_setValue(IELOVE_SUUMO_CHOICES_KEY, selections);
+    toast("掲載会社なし：指摘対象0件のため次の物件へ進みます（" + (index + 1) + "/" + handoff.records.length + "）", 1800);
+    if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
+    else startIeloveSuumoReporting();
+    return true;
+  }
+
   function openIeloveSuumoSelection() {
     const handoff = getIeloveHandoff();
     if (!handoff || !isIeloveSuumoSearchPage() || isBatchActive()) return;
@@ -2524,8 +2551,11 @@
     addMainButtons();
 
     if (!isBatchActive() && isIeloveSuumoSearchPage() && getIeloveHandoff()) {
-      await waitForReadyElement(".property-body", 5000);
-      openIeloveSuumoSelection();
+      await Promise.race([
+        waitForReadyElement(".property-body", 2500),
+        waitForReadyElement("body", 2500, () => hasConfirmedEmptyIeloveSearch())
+      ]);
+      if (!(await autoSkipEmptyIeloveSearch())) openIeloveSuumoSelection();
     }
 
     if (!isBatchActive()) return;
