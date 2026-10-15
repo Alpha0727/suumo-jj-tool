@@ -1874,12 +1874,58 @@
     document.getElementById("tm-ielove-back").onclick = exitIeloveBatchEditor;
     renderIeloveBatchEditor(draft);
   }
+
+  const IELOVE_SUUMO_HANDOFF_KEY = "ielove_suumo_handoff_v1";
+  function buildIeloveSuumoSearch(record) {
+    const address = String(record.address || "").normalize("NFKC");
+    const specs = String(record.specs || "").normalize("NFKC");
+    const floor = String(record.floor || "").normalize("NFKC");
+    const rent = String(record.rent || "").normalize("NFKC");
+    const addressMatch = address.match(/^(.+?[0-9]+)(?:丁目|[-－ー].*)/);
+    const shortAddress = addressMatch ? addressMatch[1] : address.replace(/丁目.*$/, "").trim();
+    const built = specs.match(/(\\d{4})年\\s*(\\d{1,2})月/);
+    const floorNumber = floor.match(/(\\d+)階/);
+    const area = specs.match(/(\\d+(?:\\.\\d+)?)\\s*(?:㎡|m2|m²)/i);
+    let manYen = null;
+    const yen = rent.replace(/,/g, "");
+    const man = yen.match(/(\\d+(?:\\.\\d+)?)\\s*万/);
+    const extra = yen.match(/万\\s*(\\d+)\\s*円/);
+    if (man) manYen = Number(man[1]) + (extra ? Number(extra[1])/10000 : 0);
+    else {
+      const direct = yen.match(/(\\d+)\\s*円/);
+      if (direct) manYen = Number(direct[1])/10000;
+    }
+    if (!shortAddress || !built || !floorNumber || !area || !Number.isFinite(manYen)) {
+      return { error: "住所・築年月・所在階・面積・賃料のいずれかが取得できませんでした", record };
+    }
+    const keyword = [shortAddress, built[1]+"年"+Number(built[2])+"月",floorNumber[1]+"階",area[1]+"m",Number(manYen.toFixed(4))+"万円"].join(" ");
+    const url = new URL("https://suumo.jp/jj/chintai/ichiran/FR301FC011/");
+    url.searchParams.set("ar","030");
+    url.searchParams.set("bs","040");
+    url.searchParams.set("fw",keyword);
+    url.searchParams.set("pc","100");
+    return { url:url.href, keyword };
+  }
+
+  function handoffIeloveBatchToSuumo(draft) {
+    const results = draft.records.map(buildIeloveSuumoSearch);
+    const failed = results.map((result,i) => result.error ? i+1 : null).filter(Boolean);
+    if (failed.length) {
+      toast("SUUMO検索条件が不足しています（"+failed.join("、")+"件目）。取得情報を確認してください。", 7000);
+      return;
+    }
+    const handoff = { records:draft.records, searches:results, index:0, createdAt:Date.now() };
+    GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
+    const tab = window.open(results[0].url, "_blank");
+    if (!tab) toast("SUUMOタブを開けませんでした。ポップアップ許可を確認してください。", 6000);
+  }
+
   function navigateIeloveBatch(step) {
     const draft = persistIeloveBatchEditor();
     if (!draft) return;
     const index = Number(draft.index) || 0;
     if (step > 0 && index >= draft.records.length-1) {
-      toast("添削内容を保存しました。SUUMOへの一括引き継ぎは次の開発段階です。", 5500);
+      handoffIeloveBatchToSuumo(draft);
       return;
     }
     draft.index = Math.max(0, Math.min(index+step, draft.records.length-1));
