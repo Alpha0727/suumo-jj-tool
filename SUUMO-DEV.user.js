@@ -1451,8 +1451,9 @@
       </div>
       <div id="tm-setting-footer" style="flex-shrink:0;margin:12px -14px -14px;padding:10px 14px 14px;background:#fff;border-top:1px solid #D6E0E6;">
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button id="tm-settings-batch" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#e66b00;color:#fff;font-weight:bold;cursor:pointer;">一括処理</button>
-          <button id="tm-settings-autofill" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">自動入力</button>
+          ${location.hostname === "cloud.ielove.jp"
+            ? '<button id="tm-ielove-batch-get" type="button" style="flex:1;min-width:135px;padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">一括取得</button>'
+            : '<button id="tm-settings-batch" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#e66b00;color:#fff;font-weight:bold;cursor:pointer;">一括処理</button><button id="tm-settings-autofill" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">自動入力</button>'}
           <button id="tm-save-setting" style="padding:8px 15px;border:0;border-radius:7px;background:#112B3C;color:#fff;font-weight:bold;cursor:pointer;">保存</button>
           <button id="tm-close-setting" style="padding:8px 15px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
         </div>
@@ -1685,14 +1686,21 @@
       };
     });
 
-    document.getElementById("tm-settings-batch").onclick = () => {
+    const batchButton = document.getElementById("tm-settings-batch");
+    if (batchButton) batchButton.onclick = () => {
       panel.remove();
       openCompanySelection();
     };
 
-    document.getElementById("tm-settings-autofill").onclick = async () => {
+    const autofillButton = document.getElementById("tm-settings-autofill");
+    if (autofillButton) autofillButton.onclick = async () => {
       if (document.querySelector("#js-selectGosinkoku")) await selectReportType();
       await autofill();
+    };
+
+    const ieloveGetButton = document.getElementById("tm-ielove-batch-get");
+    if (ieloveGetButton) ieloveGetButton.onclick = () => {
+      startIeloveBatchGet(ieloveGetButton);
     };
 
     document.getElementById("tm-save-setting").onclick = () => {
@@ -1768,6 +1776,85 @@
     };
     updateHalfWidthWarning();
     checkScriptUpdate();
+  }
+
+  // いえらぶ一覧の表示中物件を収集する。チェック状態と他ページは対象外。
+  const IELOVE_BATCH_DRAFT_KEY = "ielove_batch_draft_v1";
+
+  async function startIeloveBatchGet(button) {
+    if (location.hostname !== "cloud.ielove.jp") return;
+    const rows = Array.from(document.querySelectorAll('tr[id^="row_"]'))
+      .filter(row => /^row_\\d+$/.test(row.id) && row.getClientRects().length > 0);
+    if (!rows.length) {
+      toast("物件一覧が見つかりません。いえらぶの物件一覧画面で実行してください。", 5000);
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "取得中 0/" + rows.length;
+    const records = [];
+    try {
+      for (const row of rows) {
+        const id = row.id.slice(4);
+        const text = selector => row.querySelector(selector)?.textContent?.trim() || "";
+        const detailLink = row.querySelector('a[href*="/rent/index/detail/id/"]');
+        const detailUrl = new URL(detailLink?.getAttribute("href") || "/rent/index/detail/id/" + id + "/", location.origin).href;
+        const paragraphs = Array.from(row.querySelectorAll("p")).map(p => p.textContent.trim());
+        const address = paragraphs.find(p => /(?:都|道|府|県).*(?:市|区|町|村)/.test(p)) || "";
+        const specs = paragraphs.find(p => /\\d{4}年\\d{1,2}月/.test(p)) || "";
+        const response = await fetch(detailUrl, { credentials: "same-origin" });
+        if (!response.ok) throw new Error(id + ": 詳細取得 HTTP " + response.status);
+        const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+        const floorHeader = Array.from(doc.querySelectorAll("th")).find(th => th.textContent.replace(/\\s/g, "").includes("所在階/階建"));
+        const floorText = floorHeader?.nextElementSibling?.textContent?.trim() || "";
+        records.push({
+          id, name: text("#realEstateName1_" + id), room: text("#spareDetail_" + id),
+          address, specs, floor: floorText,
+          rent: text("#price_" + id), fee: text("#kanrihi_" + id),
+          managementCompany: text("#motozukeName_" + id),
+          manager: text("#motozukeStaffName_" + id),
+          phone: text("#motozukePhoneNum_" + id),
+          detailUrl
+        });
+        button.textContent = "取得中 " + records.length + "/" + rows.length;
+      }
+      GM_setValue(IELOVE_BATCH_DRAFT_KEY, { records, index: 0, savedAt: Date.now() });
+      toast(records.length + "件の物件情報を取得・保存しました ✓", 5000);
+      showIeloveBatchDraft(records);
+    } catch (error) {
+      toast("取得を中断しました：" + String(error.message || error), 6000);
+      console.error("[SUUMO JJ DEV] いえらぶ一括取得:", error);
+    } finally {
+      button.disabled = false;
+      button.textContent = "一括取得";
+    }
+  }
+
+  function showIeloveBatchDraft(records) {
+    document.getElementById("tm-ielove-draft")?.remove();
+    const panel = document.createElement("div");
+    panel.id = "tm-ielove-draft";
+    Object.assign(panel.style, { position: "fixed", inset: "5% 5% auto", maxWidth: "680px",
+      maxHeight: "88vh", margin: "0 auto", overflow: "auto", background: "#fff", color: "#112B3C",
+      border: "2px solid #112B3C", borderRadius: "12px", padding: "18px",
+      boxShadow: "0 8px 28px #0003", zIndex: "2147483647", fontSize: "13px" });
+    const title = document.createElement("h3");
+    title.textContent = "取得結果（" + records.length + "件）";
+    const close = document.createElement("button");
+    close.textContent = "閉じる";
+    close.type = "button";
+    close.style.cssText = "float:right;padding:7px 14px;cursor:pointer";
+    close.onclick = () => panel.remove();
+    const info = document.createElement("p");
+    info.textContent = "表示中の物件のみ取得しました。編集画面とSUUMO連携は次の実装段階です。";
+    const list = document.createElement("div");
+    for (const item of records) {
+      const row = document.createElement("div");
+      row.style.cssText = "padding:9px 0;border-bottom:1px solid #ddd";
+      row.textContent = [item.name, item.room, item.address, item.floor, item.managementCompany].filter(Boolean).join(" ／ ");
+      list.appendChild(row);
+    }
+    panel.append(close, title, info, list);
+    document.body.appendChild(panel);
   }
 
   function addMainButtons() {
