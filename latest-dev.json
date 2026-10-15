@@ -1,5 +1,5 @@
 {
-  "version": "7.51.0",
+  "version": "7.51.1",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "一括処理パネルに入力予定の管理会社・担当・TEL・号室を表示。2秒の自動進行を1秒に短縮し、各種固定待機を調整。一般配布版は未変更。"
+  "notes": "いえらぶ一括添削画面の詳細表示を省略し、下部5ボタンを一列に統一。一般配布版は未変更。"
 }
