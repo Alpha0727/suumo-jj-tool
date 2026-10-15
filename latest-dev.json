@@ -1,5 +1,5 @@
 {
-  "version": "7.51.4",
+  "version": "7.51.5",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "物件切替時に入力警告を即再判定・通常画面へ戻る際に警告を再判定。通常画面の3ボタンを幅いっぱいに均等配置。一般配布版は変更なし。"
+  "notes": "警告の物件切替時即更新、通常画面へ戻った際の再判定、通常ボタン3つを均等幅。SUUMO自動入力後にカレンダー表示を閉じる。一般配布版は変更なし。"
 }
