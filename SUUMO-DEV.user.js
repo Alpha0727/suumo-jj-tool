@@ -1938,6 +1938,20 @@
     if (!ieloveNormalSnapshot) ieloveNormalSnapshot = Object.fromEntries(IELOVE_EDIT_FIELDS.map(([field,id]) => [field,document.getElementById(id).value]));
     document.getElementById("tm-ielove-batch-heading").style.display = "block";
     document.getElementById("tm-ielove-batch-get").style.display = "none";
+    const footerRow = document.querySelector("#tm-setting-footer > div");
+    if (footerRow) {
+      footerRow.style.flexWrap = "nowrap";
+      footerRow.style.gap = "4px";
+      for (const button of footerRow.querySelectorAll("button")) {
+        button.style.padding = "8px 5px";
+        button.style.fontSize = "12px";
+        button.style.whiteSpace = "nowrap";
+        button.style.flex = "1 1 0";
+        button.style.minWidth = "0";
+      }
+    }
+    document.getElementById("tm-ielove-prev").textContent = "前へ";
+    document.getElementById("tm-ielove-back").textContent = "通常";
     for (const id of ["tm-ielove-prev","tm-ielove-next","tm-ielove-back"]) document.getElementById(id).style.display = "";
     document.getElementById("tm-ielove-prev").onclick = () => navigateIeloveBatch(-1);
     document.getElementById("tm-ielove-next").onclick = () => navigateIeloveBatch(1);
@@ -2006,6 +2020,18 @@
   function exitIeloveBatchEditor() {
     persistIeloveBatchEditor();
     document.getElementById("tm-ielove-batch-heading").style.display = "none";
+    const footerRow = document.querySelector("#tm-setting-footer > div");
+    if (footerRow) {
+      footerRow.style.flexWrap = "wrap";
+      footerRow.style.gap = "6px";
+      for (const button of footerRow.querySelectorAll("button")) {
+        button.style.padding = "";
+        button.style.fontSize = "";
+        button.style.whiteSpace = "";
+        button.style.flex = "";
+        button.style.minWidth = "";
+      }
+    }
     document.getElementById("tm-ielove-batch-get").style.display = "";
     for (const id of ["tm-ielove-prev","tm-ielove-next","tm-ielove-back"]) document.getElementById(id).style.display = "none";
     if (ieloveNormalSnapshot) {
