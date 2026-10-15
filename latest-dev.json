@@ -1,5 +1,5 @@
 {
-  "version": "7.51.1",
+  "version": "7.51.2",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "いえらぶ一括添削画面の詳細表示を省略し、下部5ボタンを一列に統一。一般配布版は未変更。"
+  "notes": "通常画面に戻った際にボタンの元のサイズ・余白を正確に復元。一括添削画面の横1列は維持。一般配布版は変更なし。"
 }
