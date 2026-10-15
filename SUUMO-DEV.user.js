@@ -473,6 +473,7 @@
       if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
         toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
         await sleep(1000);
+        formPreparationRunning = false;
         return await prepareReportForm(true);
       }
 
@@ -847,6 +848,7 @@
 
   function goToNextListing() {
     if (nextListingStarted || !isBatchActive()) return;
+    if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
 
     const urls = getBatchUrls();
@@ -931,7 +933,8 @@
   }
 
   async function handleConfirmPage() {
-    if (!isBatchActive()) return;
+    if (!isBatchActive() || confirmSendStarted) return;
+    if (blockUncertainIeloveResend()) return;
     const stage = getBatchStage();
     if (stage !== STAGES.SUBMITTING_CONFIRM && stage !== STAGES.SUBMITTING_FINAL) return;
     setSubmitting(true);
@@ -961,6 +964,7 @@
     await sleep(500);
     if (!isBatchActive() || !isConfirmPage() || confirmSendStarted) return;
     confirmSendStarted = true;
+    saveIeloveExecutionStatus("sending");
     sendLink.click();
   }
 
@@ -969,6 +973,7 @@
     const stage = getBatchStage();
     if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
     setBatchStage(STAGES.COMPLETE);
+    saveIeloveExecutionStatus("complete");
     setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
@@ -978,6 +983,10 @@
   }
 
   function retryCurrentListing() {
+    if (currentIeloveExecutionItem()?.status === "sending") {
+      toast("送信結果が未確認です。再実行すると二重送信になる可能性があります。", 6500);
+      return;
+    }
     cancelAutoAction(false);
     autoActionCancelledPhase = null;
 
@@ -1010,6 +1019,10 @@
   }
 
   function skipBatchItem() {
+    if (currentIeloveExecutionItem()?.status === "sending") {
+      toast("送信結果が未確認のため、この掲載はスキップできません。確認後に中止してください。", 6500);
+      return;
+    }
     if (isSubmitting()) {
       toast("送信処理中はスキップできません");
       return;
@@ -1022,6 +1035,7 @@
     if (!ok) return;
 
     setConfirmReady(false);
+    saveIeloveExecutionStatus("skipped");
     index++;
 
     if (index >= urls.length) {
@@ -1046,6 +1060,10 @@
 
   async function handleListingPage() {
     if (!isBatchActive()) return;
+    if (currentIeloveExecutionItem()?.status === "complete") {
+      goToNextListing();
+      return;
+    }
 
     const urls = getBatchUrls();
     const index = getBatchIndex();
@@ -1155,8 +1173,9 @@
           const sendLink = document.querySelector(
             'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
           );
-          if (sendLink) {
+          if (sendLink && !blockUncertainIeloveResend()) {
             confirmSendStarted = true;
+            saveIeloveExecutionStatus("sending");
             sendLink.click();
           }
         }
@@ -1166,6 +1185,7 @@
       if (isCompletePage()) {
         if (stage === STAGES.SUBMITTING_FINAL || stage === STAGES.COMPLETE) {
           setBatchStage(STAGES.COMPLETE);
+          saveIeloveExecutionStatus("complete");
           goToNextListing();
         }
       }
@@ -1277,6 +1297,7 @@
     }
 
     const current = urls[index] || "";
+    const ieloveItem = currentIeloveExecutionItem();
     let statusText = "入力内容を確認してください。";
     let statusBackground = "#fff6d8";
 
@@ -1300,7 +1321,12 @@
       statusBackground = "#eaf3ff";
     }
 
-    const canSubmit = isInputPage() && !submitting && formReady;
+    const uncertainSend = currentIeloveExecutionItem()?.status === "sending" && !isCompletePage();
+    if (uncertainSend) {
+      statusText = "⚠ 最終送信を開始済みですが、完了を確認できていません。二重送信防止のため停止しています。";
+      statusBackground = "#fff1f0";
+    }
+    const canSubmit = isInputPage() && !submitting && formReady && !uncertainSend;
     let mainButton = "";
 
     if (canSubmit) {
@@ -1318,7 +1344,7 @@
             この申告を送信 → 次の物件
           </button>`;
       }
-    } else if (batchError) {
+    } else if (batchError && !uncertainSend) {
       mainButton = `
         <button id="tm-retry-current" style="width:100%;padding:11px;border:0;border-radius:9px;background:#d9363e;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
           ↻ この物件を再実行
@@ -1333,6 +1359,7 @@
     panel.innerHTML = `
       <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">SUUMO 一括処理</div>
       <div style="font-size:27px;font-weight:bold;margin-bottom:6px;">${Math.min(index + 1, urls.length)} / ${urls.length}</div>
+      ${ieloveItem ? `<div style="font-size:13px;font-weight:bold;margin-bottom:5px;">${escapeHtml(ieloveItem.name)} ／ ${escapeHtml(ieloveItem.profile.room)}</div>` : ""}
       <div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px;">${escapeHtml(current)}</div>
       <div style="font-size:13px;background:${statusBackground};padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;">${escapeHtml(statusText)}</div>
       ${mainButton}
