@@ -1883,16 +1883,16 @@
     const rent = String(record.rent || "").normalize("NFKC");
     const addressMatch = address.match(/^(.+?[0-9]+)(?:丁目|[-－ー].*)/);
     const shortAddress = addressMatch ? addressMatch[1] : address.replace(/丁目.*$/, "").trim();
-    const built = specs.match(/(\\d{4})年\\s*(\\d{1,2})月/);
-    const floorNumber = floor.match(/(\\d+)階/);
-    const area = specs.match(/(\\d+(?:\\.\\d+)?)\\s*(?:㎡|m2|m²)/i);
+    const built = specs.match(/(\d{4})年\s*(\d{1,2})月/);
+    const floorNumber = floor.match(/(\d+)階/);
+    const area = specs.match(/(\d+(?:\.\d+)?)\s*(?:㎡|m2|m²)/i);
     let manYen = null;
     const yen = rent.replace(/,/g, "");
-    const man = yen.match(/(\\d+(?:\\.\\d+)?)\\s*万/);
-    const extra = yen.match(/万\\s*(\\d+)\\s*円/);
+    const man = yen.match(/(\d+(?:\.\d+)?)\s*万/);
+    const extra = yen.match(/万\s*(\d+)\s*円/);
     if (man) manYen = Number(man[1]) + (extra ? Number(extra[1])/10000 : 0);
     else {
-      const direct = yen.match(/(\\d+)\\s*円/);
+      const direct = yen.match(/(\d+)\s*円/);
       if (direct) manYen = Number(direct[1])/10000;
     }
     if (!shortAddress || !built || !floorNumber || !area || !Number.isFinite(manYen)) {
