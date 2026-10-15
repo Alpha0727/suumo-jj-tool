@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.48
+// @version      7.49
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -19,9 +19,16 @@
 (function () {
   'use strict';
 
+  // 今回の更新で1回だけ担当者名を未設定に戻し、入力・保存を必須にする。
+  const MANAGER_INITIALIZATION_KEY = "manager1_required_initialized_20261015";
+  if (!GM_getValue(MANAGER_INITIALIZATION_KEY, false)) {
+    GM_deleteValue("profile_manager1");
+    GM_setValue(MANAGER_INITIALIZATION_KEY, true);
+  }
+
   const PROFILE = {
     company: GM_getValue("profile_company", "株式会社エールーム"),
-    manager1: GM_getValue("profile_manager1", "東"),
+    manager1: GM_getValue("profile_manager1", ""),
     tel: normalizePhone(GM_getValue("profile_tel", "0362401146")),
     email: GM_getValue("profile_email", "a-ueno@arooms.jp"),
     mgmt_company: GM_getValue("mgmt_company", ""),
@@ -116,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.48";
+  const SCRIPT_VERSION = "7.49";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -394,6 +401,7 @@
   }
 
   async function autofill(showToast = true) {
+    if (!requireProfileManager()) return 0;
     await sleep(300);
 
     let filledCount = 0;
@@ -435,6 +443,7 @@
 
   async function prepareReportForm(forceRetry = false) {
     if (!isBatchActive() || !isInputPage()) return false;
+    if (!requireProfileManager()) return false;
     if (formPreparationRunning) return false;
     if (isFormReady()) return true;
     if (isBatchError() && !forceRetry) return false;
@@ -555,7 +564,23 @@
     GM_setValue(BATCH_KEYS.formReady, !!value);
   }
 
+
+  function requireProfileManager() {
+    if (String(PROFILE.manager1 || "").trim()) return true;
+    toast("担当者名が未設定です。基本設定から入力・保存してください。", 6000);
+    if (!document.getElementById("tm-setting-panel")) openSettings();
+    const input = document.getElementById("tm-profile-manager1");
+    const details = input?.closest("details");
+    if (details) details.open = true;
+    if (input) {
+      input.style.border = "2px solid #e03131";
+      input.focus();
+    }
+    return false;
+  }
+
   function setBatch(urls, index = 0) {
+    if (!requireProfileManager()) return false;
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -570,6 +595,7 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    return true;
   }
 
   function clearBatch() {
@@ -799,7 +825,7 @@
       const ok = confirm(`${uniqueUrls.length}件を一括処理します。\n\n青色の「✓ 指摘する」の掲載のみ処理します。\n\n開始しますか？`);
       if (!ok) return;
 
-      setBatch(uniqueUrls, 0);
+      if (!setBatch(uniqueUrls, 0)) return;
       overlay.remove();
       location.href = uniqueUrls[0];
     };
@@ -847,7 +873,7 @@
       }
       const ok = confirm(`${urls.length}件の一括処理を開始しますか？`);
       if (!ok) return;
-      setBatch(urls, 0);
+      if (!setBatch(urls, 0)) return;
       overlay.remove();
       location.href = urls[0];
     };
@@ -1734,6 +1760,13 @@
 
       const profileCompany = document.getElementById("tm-profile-company").value.trim();
       const profileManager1 = document.getElementById("tm-profile-manager1").value.trim();
+      if (!profileManager1) {
+        const input = document.getElementById("tm-profile-manager1");
+        input.style.border = "2px solid #e03131";
+        input.focus();
+        toast("基本設定の担当者名を入力して保存してください。", 5000);
+        return;
+      }
       const profileTel = normalizePhone(document.getElementById("tm-profile-tel").value);
       const profileEmail = document.getElementById("tm-profile-email").value.trim();
 
@@ -1929,12 +1962,14 @@
     // SUUMO側の申告フォームでもそのまま利用できる。
     if (location.hostname === "cloud.ielove.jp") {
       addIeloveSettingsButton();
+      requireProfileManager();
       return;
     }
 
     if (location.hostname !== "suumo.jp") return;
 
     addMainButtons();
+    if (!requireProfileManager()) return;
 
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
