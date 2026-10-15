@@ -1784,7 +1784,7 @@
   async function startIeloveBatchGet(button) {
     if (location.hostname !== "cloud.ielove.jp") return;
     const rows = Array.from(document.querySelectorAll('tr[id^="row_"]'))
-      .filter(row => /^row_\\d+$/.test(row.id) && row.getClientRects().length > 0);
+      .filter(row => /^row_\d+$/.test(row.id) && row.getClientRects().length > 0);
     if (!rows.length) {
       toast("物件一覧が見つかりません。いえらぶの物件一覧画面で実行してください。", 5000);
       return;
@@ -1800,11 +1800,11 @@
         const detailUrl = new URL(detailLink?.getAttribute("href") || "/rent/index/detail/id/" + id + "/", location.origin).href;
         const paragraphs = Array.from(row.querySelectorAll("p")).map(p => p.textContent.trim());
         const address = paragraphs.find(p => /(?:都|道|府|県).*(?:市|区|町|村)/.test(p)) || "";
-        const specs = paragraphs.find(p => /\\d{4}年\\d{1,2}月/.test(p)) || "";
+        const specs = paragraphs.find(p => /\d{4}年\d{1,2}月/.test(p)) || "";
         const response = await fetch(detailUrl, { credentials: "same-origin" });
         if (!response.ok) throw new Error(id + ": 詳細取得 HTTP " + response.status);
         const doc = new DOMParser().parseFromString(await response.text(), "text/html");
-        const floorHeader = Array.from(doc.querySelectorAll("th")).find(th => th.textContent.replace(/\\s/g, "").includes("所在階/階建"));
+        const floorHeader = Array.from(doc.querySelectorAll("th")).find(th => th.textContent.replace(/\s/g, "").includes("所在階/階建"));
         const floorText = floorHeader?.nextElementSibling?.textContent?.trim() || "";
         records.push({
           id, name: text("#realEstateName1_" + id), room: text("#spareDetail_" + id),
