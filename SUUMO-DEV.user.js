@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.49.0
+// @version      7.50.0
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.49.0";
+  const SCRIPT_VERSION = "7.50.0";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -857,6 +857,11 @@
 
     if (index >= urls.length) {
       const total = urls.length;
+      const execution = getIeloveExecution();
+      if (execution) {
+        execution.finishedAt = Date.now();
+        GM_setValue(IELOVE_BATCH_EXECUTION_KEY, execution);
+      }
 
       clearBatch();
 
@@ -1039,6 +1044,11 @@
     index++;
 
     if (index >= urls.length) {
+      const execution = getIeloveExecution();
+      if (execution) {
+        execution.finishedAt = Date.now();
+        GM_setValue(IELOVE_BATCH_EXECUTION_KEY, execution);
+      }
       clearBatch();
       document.getElementById("tm-batch-status")?.remove();
       toast("✓ 一括処理が終了しました", 5000);
