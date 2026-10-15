@@ -1,5 +1,5 @@
 {
-  "version": "7.51.2",
+  "version": "7.51.3",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "通常画面に戻った際にボタンの元のサイズ・余白を正確に復元。一括添削画面の横1列は維持。一般配布版は変更なし。"
+  "notes": "いえらぶ一括添削画面で切替クリック直後に物件情報表示、入力時即保存。一般配布版は未変更。"
 }
