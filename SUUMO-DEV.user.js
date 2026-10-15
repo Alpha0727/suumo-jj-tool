@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.51.5
+// @version      7.52.0
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51.5";
+  const SCRIPT_VERSION = "7.52.0";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -494,7 +494,9 @@
       const currentProfile = activeIeloveProfile();
       if (getIeloveExecution() && !currentIeloveExecutionItem()) throw new Error("物件ごとの申告情報と掲載URLが一致しません");
       if (currentProfile && validateIeloveProfile(currentProfile)) throw new Error("必要項目が不足：" + validateIeloveProfile(currentProfile));
+      const fillStarted = performance.now();
       const count = await autofill(false);
+      console.info("[SUUMO JJ DEV] 自動入力:", Math.round(performance.now() - fillStarted) + "ms");
       if (currentProfile && ieloveFormMismatch(currentProfile)) throw new Error("入力結果が一致しません：" + ieloveFormMismatch(currentProfile));
 
       setBatchError(false);
@@ -918,7 +920,7 @@
     setConfirmReady(false);
     setFormReady(false);
     toast(`送信完了！\n次の物件へ進みます（${index + 1}/${urls.length}）`, 2000);
-    setTimeout(() => { location.href = urls[index]; }, 1000);
+    setTimeout(() => { location.href = urls[index]; }, 150);
   }
 
   // 1回目：パネルを確認モードへ
@@ -1022,7 +1024,7 @@
     setConfirmReady(false);
     updateBatchPanel();
     toast("申告の送信が完了しました ✓", 1800);
-    await sleep(500);
+    await sleep(100);
     goToNextListing();
   }
 
@@ -1124,14 +1126,10 @@
     updateBatchPanel();
     toast(`掲載ページ ${index + 1}/${urls.length}\n申告フォームを開きます…`);
 
-    for (let i = 0; i < 40; i++) {
-      const link = document.querySelector("#js-bknToiawaseFr");
-      if (link) {
-        await sleep(500);
-        link.click();
-        return;
-      }
-      await sleep(200);
+    const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
+    if (link && isBatchActive() && isListingPage()) {
+      link.click();
+      return;
     }
 
     toast("申告リンクが見つかりませんでした。\n手動で申告リンクを押してください。", 6000);
@@ -2526,7 +2524,7 @@
     addMainButtons();
 
     if (!isBatchActive() && isIeloveSuumoSearchPage() && getIeloveHandoff()) {
-      await sleep(700);
+      await waitForReadyElement(".property-body", 5000);
       openIeloveSuumoSelection();
     }
 
@@ -2559,7 +2557,6 @@
         return;
       }
 
-      await sleep(700);
       await prepareReportForm();
       return;
     }
