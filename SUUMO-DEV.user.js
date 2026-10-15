@@ -315,10 +315,38 @@
     return false;
   }
 
+  // 固定待機ではなくDOMの要素出現を監視して即時再開。
+  function waitForReadyElement(selector, timeoutMs = 8000, predicate = null) {
+    const ready = () => {
+      const el = document.querySelector(selector);
+      return el && (!predicate || predicate(el)) ? el : null;
+    };
+    if (ready()) return Promise.resolve(ready());
+    return new Promise(resolve => {
+      let done = false;
+      let observer;
+      let timer;
+      const finish = el => {
+        if (done) return;
+        done = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve(el);
+      };
+      observer = new MutationObserver(() => {
+        const el = ready();
+        if (el) finish(el);
+      });
+      observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:["style","class","disabled"]});
+      timer = setTimeout(() => finish(null), timeoutMs);
+      const el = ready();
+      if (el) finish(el);
+    });
+  }
+
   async function setValue(el, value) {
     if (!el || value == null || String(value).trim() === "" || !isVisibleEditable(el)) return false;
     try {
-      el.scrollIntoView({ block: "center", inline: "nearest" });
       if (setNative(el, value)) return true;
       await sleep(80);
       return setNative(el, value);
