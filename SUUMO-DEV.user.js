@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.50.1
+// @version      7.51.0
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.50.1";
+  const SCRIPT_VERSION = "7.51.0";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -366,19 +366,19 @@
     const select = document.querySelector("#js-selectGosinkoku");
     if (!select) return false;
     setNative(select, "1");
-    await sleep(400);
+    await sleep(200);
     const radio = document.querySelector("#tashaKanri");
     if (!radio) return false;
     radio.checked = true;
     try { radio.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
     try { radio.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
     try { radio.dispatchEvent(new Event("click", { bubbles: true })); } catch {}
-    await sleep(500);
+    await sleep(250);
     return true;
   }
 
   async function autofill(showToast = true) {
-    await sleep(300);
+    await sleep(100);
 
     let filledCount = 0;
 
@@ -450,7 +450,7 @@
       const selected = await selectReportType();
       if (!selected) throw new Error("申告内容の選択欄を準備できませんでした");
 
-      await sleep(300);
+      await sleep(100);
       if (!isBatchActive() || !isInputPage()) return false;
       const currentProfile = activeIeloveProfile();
       if (getIeloveExecution() && !currentIeloveExecutionItem()) throw new Error("物件ごとの申告情報と掲載URLが一致しません");
@@ -472,7 +472,7 @@
 
       if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
         toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
-        await sleep(1000);
+        await sleep(500);
         formPreparationRunning = false;
         return await prepareReportForm(true);
       }
@@ -947,7 +947,7 @@
     setConfirmReady(false);
     updateBatchPanel();
     toast("確認画面を確認しました。\n送信します…", 1800);
-    await sleep(700);
+    await sleep(350);
 
     let sendLink = null;
     for (let i = 0; i < 30; i++) {
@@ -966,7 +966,7 @@
       return;
     }
 
-    await sleep(500);
+    await sleep(250);
     if (!isBatchActive() || !isConfirmPage() || confirmSendStarted) return;
     confirmSendStarted = true;
     saveIeloveExecutionStatus("sending");
@@ -983,7 +983,7 @@
     setConfirmReady(false);
     updateBatchPanel();
     toast("申告の送信が完了しました ✓", 1800);
-    await sleep(1200);
+    await sleep(500);
     goToNextListing();
   }
 
@@ -1114,7 +1114,7 @@
     return location.pathname.includes("/jj/chintai/shiryou/FR400FG003/");
   }
 
-  const AUTO_ACTION_MS = 2000;
+  const AUTO_ACTION_MS = 1000;
   const AUTO_ACTION_PHASE_KEY = "suumo_auto_action_phase";
   const AUTO_ACTION_DEADLINE_KEY = "suumo_auto_action_deadline";
   const FORM_PREP_ATTEMPTS_KEY = "suumo_form_prep_attempts";
