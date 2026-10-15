@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.50.0
+// @version      7.50.1
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.50.0";
+  const SCRIPT_VERSION = "7.50.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1308,6 +1308,17 @@
 
     const current = urls[index] || "";
     const ieloveItem = currentIeloveExecutionItem();
+    const plannedProfile = ieloveItem?.profile || PROFILE;
+    const plannedFields = [
+      ["管理会社", plannedProfile.mgmt_company],
+      ["担当", plannedProfile.manager2],
+      ["TEL", plannedProfile.mgmt_tel],
+      ["号室", plannedProfile.room]
+    ];
+    const plannedInputHtml = plannedFields.map(([label, value]) =>
+      '<span style="display:inline-block;margin-right:7px;max-width:100%;overflow-wrap:anywhere;"><span style="color:#64748b;">' +
+      escapeHtml(label) + '：</span>' + escapeHtml(String(value || "未設定")) + '</span>'
+    ).join("");
     let statusText = "入力内容を確認してください。";
     let statusBackground = "#fff6d8";
 
@@ -1371,6 +1382,7 @@
       <div style="font-size:27px;font-weight:bold;margin-bottom:6px;">${Math.min(index + 1, urls.length)} / ${urls.length}</div>
       ${ieloveItem ? `<div style="font-size:13px;font-weight:bold;margin-bottom:5px;">${escapeHtml(ieloveItem.name)} ／ ${escapeHtml(ieloveItem.profile.room)}</div>` : ""}
       <div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px;">${escapeHtml(current)}</div>
+      <div style="font-size:11px;line-height:1.5;padding:6px 8px;margin-bottom:9px;background:#f5f7fa;border-radius:6px;color:#25364a;"><span style="font-weight:bold;color:#526575;">自動入力予定　</span>${plannedInputHtml}</div>
       <div style="font-size:13px;background:${statusBackground};padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;">${escapeHtml(statusText)}</div>
       ${mainButton}
       <div style="display:flex;gap:7px;">
