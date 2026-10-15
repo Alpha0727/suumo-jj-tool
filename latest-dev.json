@@ -1,5 +1,5 @@
 {
-  "version": "7.52.0",
+  "version": "7.52.1",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "フォーム出現待ちをDOM監視化し固定待機・入力時スクロールを削減。1秒の自動送信待機と送信照合を維持。一般配布版は変更なし。"
+  "notes": "SUUMO会社選択の下部3ボタンを横幅いっぱいに配置。掲載会社0社と確認できた検索結果を自動スキップ。一般配布版は変更なし。"
 }
