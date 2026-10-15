@@ -1816,7 +1816,7 @@
         const floorHeader = Array.from(doc.querySelectorAll("th")).find(th => th.textContent.replace(/\s/g, "").includes("所在階/階建"));
         const floorText = floorHeader?.nextElementSibling?.textContent?.trim() || "";
         records.push({
-          id, name: text("#realEstateName1_" + id), room: text("#spareDetail_" + id),
+          id, name: text("#realEstateName1_" + id), room: text("#spareDetail_" + id).replace(/（非公開）|\(非公開\)/g, "").trim(),
           address, specs, floor: floorText,
           rent: text("#price_" + id), fee: text("#kanrihi_" + id),
           managementCompany: text("#motozukeName_" + id),
@@ -1859,7 +1859,7 @@
     document.getElementById("tm-ielove-batch-name").textContent = item.name || "物件名未取得";
     document.getElementById("tm-ielove-batch-progress").textContent = (index+1) + " / " + draft.records.length + "件";
     document.getElementById("tm-ielove-batch-meta").textContent = [item.room,item.address,item.floor,item.specs,item.rent].filter(Boolean).join(" ／ ");
-    for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = item[field] || "";
+    for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = field === "room" ? String(item[field] || "").replace(/（非公開）|\(非公開\)/g, "").trim() : (item[field] || "");
     document.getElementById("tm-ielove-prev").disabled = index === 0;
     document.getElementById("tm-ielove-next").textContent = index === draft.records.length - 1 ? "SUUMOへ進む →" : "次へ →";
   }
