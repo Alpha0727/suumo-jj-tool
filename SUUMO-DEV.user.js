@@ -1418,6 +1418,7 @@
           <div><div>メールアドレス</div><input id="tm-profile-email" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.email)}"></div>
         </div>
       </details>
+      ${location.hostname === "cloud.ielove.jp" ? '<div id="tm-ielove-batch-heading" style="display:none;margin-bottom:12px;padding:10px;background:#EEF3F6;border:1px solid #D6E0E6;border-radius:8px;"><strong id="tm-ielove-batch-name"></strong><span id="tm-ielove-batch-progress" style="float:right"></span><div id="tm-ielove-batch-meta" style="font-size:12px;margin-top:6px"></div></div>' : ''}
       <div style="margin-bottom:8px;"><div>管理会社名</div><input id="tm-mgmt-company" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.mgmt_company)}"></div>
       <div style="margin-bottom:8px;"><div>管理会社TEL</div><input id="tm-mgmt-tel" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.mgmt_tel)}"></div>
       <div style="margin-bottom:8px;"><div>管理会社担当者</div><input id="tm-manager2" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml(PROFILE.manager2)}"></div>
@@ -1454,6 +1455,7 @@
           ${location.hostname === "cloud.ielove.jp"
             ? '<button id="tm-ielove-batch-get" type="button" style="flex:1;min-width:135px;padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">一括取得</button>'
             : '<button id="tm-settings-batch" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#e66b00;color:#fff;font-weight:bold;cursor:pointer;">一括処理</button><button id="tm-settings-autofill" type="button" style="padding:8px 13px;border:0;border-radius:7px;background:#205375;color:#fff;font-weight:bold;cursor:pointer;">自動入力</button>'}
+          ${location.hostname === "cloud.ielove.jp" ? '<button id="tm-ielove-prev" type="button" style="display:none;padding:8px;border:1px solid #B9C7CF;border-radius:7px;background:#fff;cursor:pointer">← 前へ</button><button id="tm-ielove-next" type="button" style="display:none;padding:8px;border:0;border-radius:7px;background:#205375;color:#fff;cursor:pointer">次へ →</button><button id="tm-ielove-back" type="button" style="display:none;padding:8px;border:1px solid #B9C7CF;border-radius:7px;background:#fff;cursor:pointer">通常画面</button>' : ''}
           <button id="tm-save-setting" style="padding:8px 15px;border:0;border-radius:7px;background:#112B3C;color:#fff;font-weight:bold;cursor:pointer;">保存</button>
           <button id="tm-close-setting" style="padding:8px 15px;border:1px solid #B9C7CF;border-radius:7px;background:#F7F9FA;color:#334155;cursor:pointer;">閉じる</button>
         </div>
