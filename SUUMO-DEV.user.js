@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.48.0
+// @version      7.48.1
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.48.0";
+  const SCRIPT_VERSION = "7.48.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1808,8 +1808,8 @@
         const detailLink = row.querySelector('a[href*="/rent/index/detail/id/"]');
         const detailUrl = new URL(detailLink?.getAttribute("href") || "/rent/index/detail/id/" + id + "/", location.origin).href;
         const paragraphs = Array.from(row.querySelectorAll("p")).map(p => p.textContent.trim());
-        const address = paragraphs.find(p => /(?:都|道|府|県).*(?:市|区|町|村)/.test(p)) || "";
-        const specs = paragraphs.find(p => /\d{4}年\d{1,2}月/.test(p)) || "";
+        const address = text("#address_" + id) || paragraphs.find(p => /(?:都|道|府|県).*(?:市|区|町|村)/.test(p)) || "";
+        const specs = row.textContent.replace(/\s+/g, " ");
         const response = await fetch(detailUrl, { credentials: "same-origin" });
         if (!response.ok) throw new Error(id + ": 詳細取得 HTTP " + response.status);
         const doc = new DOMParser().parseFromString(await response.text(), "text/html");
@@ -1896,7 +1896,7 @@
       if (direct) manYen = Number(direct[1])/10000;
     }
     if (!shortAddress || !built || !floorNumber || !area || !Number.isFinite(manYen)) {
-      return { error: "住所・築年月・所在階・面積・賃料のいずれかが取得できませんでした", record };
+      return { error: [!shortAddress && "住所", !built && "築年月", !floorNumber && "所在階", !area && "面積", !Number.isFinite(manYen) && "賃料"].filter(Boolean).join("・"), record };
     }
     const keyword = [shortAddress, built[1]+"年"+Number(built[2])+"月",floorNumber[1]+"階",area[1]+"m",Number(manYen.toFixed(4))+"万円"].join(" ");
     const url = new URL("https://suumo.jp/jj/chintai/ichiran/FR301FC011/");
@@ -1911,7 +1911,7 @@
     const results = draft.records.map(buildIeloveSuumoSearch);
     const failed = results.map((result,i) => result.error ? i+1 : null).filter(Boolean);
     if (failed.length) {
-      toast("SUUMO検索条件が不足しています（"+failed.join("、")+"件目）。取得情報を確認してください。", 7000);
+      toast("SUUMO検索条件不足：" + results.map((x,i) => x.error ? (i+1)+"件目 "+x.error : "").filter(Boolean).join("／"), 9000);
       return;
     }
     const handoff = { records:draft.records, searches:results, index:0, createdAt:Date.now() };
