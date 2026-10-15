@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.51.4
+// @version      7.51.5
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51.4";
+  const SCRIPT_VERSION = "7.51.5";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -377,6 +377,23 @@
     return true;
   }
 
+  // 日付入力で開いたカレンダーを閉じる（入力値や日付設定は変更しない）。
+  function closeSuumoDateCalendar() {
+    const active = document.activeElement;
+    if (active && ["textSinkokuDate", "textSeiyakuDate", "textSinkokuKaisyaKakuninDate"].includes(active.id)) {
+      active.blur();
+    }
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    } catch (_) {}
+    for (const selector of ["#ui-datepicker-div", ".ui-datepicker", ".datepicker-dropdown", ".flatpickr-calendar.open"]) {
+      document.querySelectorAll(selector).forEach(calendar => {
+        if (calendar.classList.contains("flatpickr-calendar")) calendar.classList.remove("open");
+        else calendar.style.display = "none";
+      });
+    }
+  }
+
   async function autofill(showToast = true) {
     await sleep(100);
 
@@ -396,6 +413,9 @@
     }
 
     filledCount += fillTodayDates();
+    // カレンダーの表示処理が後から走る場合にも閉じる。
+    closeSuumoDateCalendar();
+    requestAnimationFrame(closeSuumoDateCalendar);
 
     if (showToast) {
       toast(
