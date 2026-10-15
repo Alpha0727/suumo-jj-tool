@@ -2107,6 +2107,50 @@
     location.href = handoff.searches[handoff.index].url;
   }
 
+
+  const IELOVE_BATCH_EXECUTION_KEY = "ielove_suumo_execution_v1";
+  function getIeloveExecution() {
+    const state = GM_getValue(IELOVE_BATCH_EXECUTION_KEY, null);
+    return state && Array.isArray(state.items) && state.items.length ? state : null;
+  }
+  function currentIeloveExecutionItem() {
+    const state = getIeloveExecution();
+    if (!state || !isBatchActive()) return null;
+    const index = getBatchIndex();
+    const item = state.items[index];
+    const expected = getBatchUrls()[index];
+    return item && item.url === expected ? item : null;
+  }
+  function activeIeloveProfile() {
+    const item = currentIeloveExecutionItem();
+    return item ? item.profile : null;
+  }
+  function validateIeloveProfile(profile) {
+    if (!profile) return "対象物件の管理情報が見つかりません";
+    const required = [["mgmt_company","管理会社名"],["mgmt_tel","管理会社TEL"],["manager2","管理会社担当者"],["room","号室"]];
+    return required.filter(([key]) => !String(profile[key] || "").trim()).map(([,label]) => label).join("・");
+  }
+  function saveIeloveExecutionStatus(status) {
+    const state = getIeloveExecution();
+    if (!state || !isBatchActive()) return;
+    const index = getBatchIndex();
+    if (!state.items[index] || state.items[index].url !== getBatchUrls()[index]) return;
+    state.items[index].status = status;
+    state.items[index].updatedAt = Date.now();
+    GM_setValue(IELOVE_BATCH_EXECUTION_KEY, state);
+  }
+  function blockUncertainIeloveResend() {
+    const item = currentIeloveExecutionItem();
+    if (!item || item.status !== "sending") return false;
+    cancelAutoAction(false);
+    setSubmitting(false);
+    setBatchError(true);
+    setFormReady(false);
+    updateBatchPanel();
+    toast("最終送信を開始済みです。送信結果を確認できるまで再送信しないでください。", 7500);
+    return true;
+  }
+
   function startIeloveSuumoReporting() {
     const handoff = getIeloveHandoff();
     if (!handoff || isBatchActive()) return;
@@ -2114,27 +2158,59 @@
     const globalExclusions = new Set(GM_getValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, []));
     const pending = [];
     const incomplete = [];
-    for (let i=0;i<handoff.records.length;i++) {
-      const selections = saved[i];
-      if (!selections || !Array.isArray(selections.__companies)) { incomplete.push(i+1);continue; }
-      for (const company of selections.__companies) {
-        if (globalExclusions.has(company.key) || selections[company.key] === "once") continue;
-        if (Array.isArray(company.urls)) pending.push(...company.urls);
+    const missingProfiles = [];
+    for (let i = 0; i < handoff.records.length; i++) {
+      const selection = saved[i];
+      if (!selection || !Array.isArray(selection.__companies)) {
+        incomplete.push(i + 1);
+        continue;
       }
+      const record = handoff.records[i];
+      const profile = {
+        mgmt_company: String(record.managementCompany || "").trim(),
+        mgmt_tel: String(record.phone || "").normalize("NFKC").replace(/\D/g, ""),
+        manager2: String(record.manager || "").trim(),
+        room: String(record.room || "").replace(/（非公開）|\(非公開\)/g, "").trim()
+      };
+      const urls = [];
+      for (const company of selection.__companies) {
+        if (globalExclusions.has(company.key) || selection[company.key] === "once") continue;
+        if (Array.isArray(company.urls)) urls.push(...company.urls);
+      }
+      if (urls.length && validateIeloveProfile(profile)) missingProfiles.push((i + 1) + "件目：" + validateIeloveProfile(profile));
+      for (const url of [...new Set(urls)]) pending.push({ url, propertyIndex:i, name:record.name || "", profile, status:"pending" });
     }
     if (incomplete.length) {
       alert("まだ確認していない物件があります：" + incomplete.join("、") + "件目");
       return;
     }
-    const uniqueUrls = [...new Set(pending)];
-    if (!uniqueUrls.length) {
+    if (missingProfiles.length) {
+      alert("物件ごとの申告情報が不足しています。いえらぶで修正してください。\n\n" + missingProfiles.join("\n"));
+      return;
+    }
+    const unique = new Map();
+    const conflicts = [];
+    for (const item of pending) {
+      const previous = unique.get(item.url);
+      if (!previous) { unique.set(item.url, item); continue; }
+      if (JSON.stringify(previous.profile) !== JSON.stringify(item.profile)) {
+        conflicts.push(previous.propertyIndex + 1 + "件目と" + (item.propertyIndex + 1) + "件目");
+      }
+    }
+    if (conflicts.length) {
+      alert("同じSUUMO掲載に異なる物件情報が紐付いています。誤送信防止のため停止しました。\n" + [...new Set(conflicts)].join("\n"));
+      return;
+    }
+    const items = [...unique.values()];
+    if (!items.length) {
       alert("指摘対象がありません。選択内容を確認してください。");
       return;
     }
-    if (!confirm(handoff.records.length+"物件から"+uniqueUrls.length+"掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
+    if (!confirm(handoff.records.length + "物件から" + items.length + "掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
+    GM_setValue(IELOVE_BATCH_EXECUTION_KEY, { items, startedAt:Date.now(), finishedAt:null });
     GM_deleteValue(IELOVE_SUUMO_HANDOFF_KEY);
-    setBatch(uniqueUrls,0);
-    location.href = uniqueUrls[0];
+    setBatch(items.map(item => item.url), 0);
+    location.href = items[0].url;
   }
 
   function addMainButtons() {
