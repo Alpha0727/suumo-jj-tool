@@ -1946,6 +1946,196 @@
     activateIeloveBatchEditor(GM_getValue(IELOVE_BATCH_DRAFT_KEY, null));
   }
 
+  // いえらぶから引き継いだ検索結果専用。従来の単独指摘UIには影響させない。
+  const IELOVE_SUUMO_CHOICES_KEY = "ielove_suumo_choices_v1";
+  const IELOVE_SUUMO_GLOBAL_EXCLUDES = "ielove_suumo_excluded_company_ids_v1";
+
+  function getIeloveHandoff() {
+    const data = GM_getValue(IELOVE_SUUMO_HANDOFF_KEY, null);
+    return data && Array.isArray(data.records) && Array.isArray(data.searches) &&
+      data.records.length === data.searches.length ? data : null;
+  }
+
+  function isIeloveSuumoSearchPage() {
+    return location.hostname === "suumo.jp" && location.pathname.includes("/jj/chintai/ichiran/");
+  }
+
+  function ieloveCompanyKey(card, name) {
+    const link = card.querySelector('a[href^="/chintai/kaisha/"]');
+    const href = link?.getAttribute("href") || "";
+    return href.replace(/[?#].*$/, "").replace(/\/$/, "") || "name:" + name;
+  }
+
+  function getIeloveSearchCompanies() {
+    const map = new Map();
+    for (const card of document.querySelectorAll(".property-body")) {
+      const link = card.querySelector('a[href^="/chintai/kaisha/"]');
+      const name = link?.textContent?.trim();
+      if (!name) continue;
+      const key = ieloveCompanyKey(card, name);
+      const clip = card.querySelector('input[id="clipkey"]');
+      let propertyId = clip?.value?.trim() || "";
+      if (!propertyId) {
+        const rel = card.querySelector("a.js-singleShiryoSeikyu[rel]")?.getAttribute("rel") || "";
+        propertyId = rel.match(/(?:^|_)(\d{8,})$/)?.[1] || "";
+      }
+      if (!map.has(key)) map.set(key, { key, name, urls: [] });
+      if (propertyId) {
+        const url = "https://suumo.jp/chintai/bc_" + propertyId + "/";
+        const entry = map.get(key);
+        if (!entry.urls.includes(url)) entry.urls.push(url);
+      }
+    }
+    return [...map.values()];
+  }
+
+  function openIeloveSuumoSelection() {
+    const handoff = getIeloveHandoff();
+    if (!handoff || !isIeloveSuumoSearchPage() || isBatchActive()) return;
+    const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
+    const url = new URL(location.href);
+    const expected = new URL(handoff.searches[index].url);
+    if (url.searchParams.get("fw") !== expected.searchParams.get("fw")) return;
+    document.getElementById("tm-ielove-suumo-selection")?.remove();
+    const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+    const exclusions = new Set(GM_getValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, []));
+    const companies = getIeloveSearchCompanies();
+    const modes = { ...(choices[index] || {}) };
+    const overlay = document.createElement("div");
+    overlay.id = "tm-ielove-suumo-selection";
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif";
+    const shell = document.createElement("div");
+    shell.style.cssText = "width:800px;max-width:94vw;max-height:90vh;background:#fff;border-radius:14px;box-shadow:0 12px 35px #0005;display:flex;flex-direction:column;overflow:hidden;color:#222";
+    const head = document.createElement("div");
+    head.style.cssText = "padding:16px 18px;border-bottom:1px solid #ddd";
+    const title = document.createElement("div");
+    title.style.cssText = "font-size:21px;font-weight:bold";
+    title.textContent = "SUUMO 一括指摘対象の選択";
+    const subtitle = document.createElement("div");
+    subtitle.style.cssText = "font-size:13px;color:#666;margin-top:6px";
+    const record = handoff.records[index];
+    subtitle.textContent = (index + 1) + " / " + handoff.records.length + "件　" + (record.name || "物件名未取得") + "　" + (record.room || "");
+    head.append(title,subtitle);
+    const list = document.createElement("div");
+    list.style.cssText = "overflow-y:auto;flex:1;padding:6px 15px";
+    const styles = {
+      report:"background:#1677ff;color:white;border-color:#1677ff",
+      once:"background:#fa8c16;color:white;border-color:#fa8c16",
+      permanent:"background:#d9363e;color:white;border-color:#d9363e"
+    };
+    const updateButtons = () => {
+      list.querySelectorAll("[data-company-key]").forEach(row => {
+        const key = row.dataset.companyKey;
+        const effective = exclusions.has(key) ? "permanent" : (modes[key] || "report");
+        row.querySelectorAll("button[data-choice]").forEach(button => {
+          const mode = button.dataset.choice;
+          button.style.cssText = "flex:1;min-width:0;padding:10px 3px;border:2px solid #ddd;border-radius:8px;background:#fff;color:#333;font-weight:bold;cursor:pointer;font-size:12px";
+          if (mode === effective) button.style.cssText += ";" + styles[mode];
+          button.textContent = (mode === effective ? "✓ " : "") + ({report:"指摘する",once:"今回だけ除外",permanent:"今後も除外"}[mode]);
+        });
+      });
+    };
+    for (const company of companies) {
+      const row = document.createElement("div");
+      row.dataset.companyKey = company.key;
+      row.style.cssText = "padding:12px 0;border-bottom:1px solid #e5e5e5";
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:15px;font-weight:bold;margin-bottom:8px";
+      label.textContent = company.name + "（掲載 " + company.urls.length + "件）";
+      const buttons = document.createElement("div");
+      buttons.style.cssText = "display:flex;gap:7px";
+      for (const mode of ["report","once","permanent"]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.choice = mode;
+        button.onclick = () => {
+          if (mode === "permanent") exclusions.add(company.key);
+          else exclusions.delete(company.key);
+          if (mode !== "permanent") modes[company.key] = mode;
+          GM_setValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, [...exclusions]);
+          updateButtons();
+        };
+        buttons.appendChild(button);
+      }
+      row.append(label,buttons);
+      list.appendChild(row);
+    }
+    if (!companies.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "掲載会社が見つかりませんでした。検索結果を確認してください。";
+      list.appendChild(empty);
+    }
+    const foot = document.createElement("div");
+    foot.style.cssText = "padding:14px 18px;border-top:1px solid #ddd;background:#fafafa;display:flex;gap:8px;flex-wrap:wrap";
+    const makeButton = (label, primary, fn) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = label;
+      button.style.cssText = "padding:10px 14px;border:1px solid #ccd3da;border-radius:8px;cursor:pointer;font-weight:bold;" +
+        (primary ? "background:#205375;color:#fff;border:0" : "background:#fff");
+      button.onclick = fn;
+      foot.appendChild(button);
+      return button;
+    };
+    const save = () => {
+      const latest = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+      latest[index] = { ...modes, __companies:companies };
+      GM_setValue(IELOVE_SUUMO_CHOICES_KEY, latest);
+    };
+    makeButton("← 前へ", false, () => {
+      save();
+      if (index > 0) navigateIeloveSuumo(-1);
+    }).disabled = index === 0;
+    makeButton(index === handoff.records.length - 1 ? "選択を終えて一括指摘へ" : "次へ →", true, () => {
+      save();
+      if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
+      else startIeloveSuumoReporting();
+    });
+    makeButton("閉じる",false, () => { save(); overlay.remove(); });
+    updateButtons();
+    shell.append(head,list,foot);
+    overlay.appendChild(shell);
+    document.body.appendChild(overlay);
+  }
+
+  function navigateIeloveSuumo(delta) {
+    const handoff = getIeloveHandoff();
+    if (!handoff) return;
+    handoff.index = Math.max(0, Math.min((Number(handoff.index)||0)+delta, handoff.records.length - 1));
+    GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
+    location.href = handoff.searches[handoff.index].url;
+  }
+
+  function startIeloveSuumoReporting() {
+    const handoff = getIeloveHandoff();
+    if (!handoff || isBatchActive()) return;
+    const saved = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+    const globalExclusions = new Set(GM_getValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, []));
+    const pending = [];
+    const incomplete = [];
+    for (let i=0;i<handoff.records.length;i++) {
+      const selections = saved[i];
+      if (!selections || !Array.isArray(selections.__companies)) { incomplete.push(i+1);continue; }
+      for (const company of selections.__companies) {
+        if (globalExclusions.has(company.key) || selections[company.key] === "once") continue;
+        if (Array.isArray(company.urls)) pending.push(...company.urls);
+      }
+    }
+    if (incomplete.length) {
+      alert("まだ確認していない物件があります：" + incomplete.join("、") + "件目");
+      return;
+    }
+    const uniqueUrls = [...new Set(pending)];
+    if (!uniqueUrls.length) {
+      alert("指摘対象がありません。選択内容を確認してください。");
+      return;
+    }
+    if (!confirm(handoff.records.length+"物件から"+uniqueUrls.length+"掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
+    GM_deleteValue(IELOVE_SUUMO_HANDOFF_KEY);
+    setBatch(uniqueUrls,0);
+    location.href = uniqueUrls[0];
+  }
+
   function addMainButtons() {
     if (document.getElementById("tm-main-buttons")) return;
 
@@ -2071,6 +2261,11 @@
     if (location.hostname !== "suumo.jp") return;
 
     addMainButtons();
+
+    if (!isBatchActive() && isIeloveSuumoSearchPage() && getIeloveHandoff()) {
+      await sleep(700);
+      openIeloveSuumoSelection();
+    }
 
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
