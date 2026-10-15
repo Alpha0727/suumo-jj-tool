@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.47
+// @version      7.48
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -30,10 +30,26 @@
     room: GM_getValue("room", "")
   };
 
+  // このアップデート時に1回だけ、日付設定を新しい既定値に切り替える。
+  const DATE_DEFAULTS_MIGRATION_KEY = "date_defaults_migrated_20261015";
+  if (!GM_getValue(DATE_DEFAULTS_MIGRATION_KEY, false)) {
+    GM_setValue("date_offset_apply", 0);
+    GM_setValue("date_offset_contract", 0);
+    GM_setValue("date_offset_confirm", 0);
+    GM_setValue("date_skip_apply", true);
+    GM_setValue("date_skip_contract", true);
+    GM_setValue("date_skip_confirm", false);
+    GM_setValue(DATE_DEFAULTS_MIGRATION_KEY, true);
+  }
   const DATE_OFFSETS = {
-    apply: Number(GM_getValue("date_offset_apply", -7)),
-    contract: Number(GM_getValue("date_offset_contract", 7)),
+    apply: Number(GM_getValue("date_offset_apply", 0)),
+    contract: Number(GM_getValue("date_offset_contract", 0)),
     confirm: Number(GM_getValue("date_offset_confirm", 0))
+  };
+  const DATE_SKIP = {
+    apply: !!GM_getValue("date_skip_apply", true),
+    contract: !!GM_getValue("date_skip_contract", true),
+    confirm: !!GM_getValue("date_skip_confirm", false)
   };
 
   const BATCH_KEYS = {
@@ -100,7 +116,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.47";
+  const SCRIPT_VERSION = "7.48";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -351,15 +367,15 @@
 
   function fillTodayDates() {
     const fields = [
-      ["#textSinkokuDate", DATE_OFFSETS.apply],
-      ["#textSeiyakuDate", DATE_OFFSETS.contract],
-      ["#textSinkokuKaisyaKakuninDate", DATE_OFFSETS.confirm]
+      ["#textSinkokuDate", "apply"],
+      ["#textSeiyakuDate", "contract"],
+      ["#textSinkokuKaisyaKakuninDate", "confirm"]
     ];
-    return fields.reduce(
-      (count, [selector, offset]) =>
-        count + (setReadonlyDate(selector, getDateForSuumo(offset)) ? 1 : 0),
-      0
-    );
+    return fields.reduce((count, [selector, key]) => {
+      // 記入しない設定の項目は、以前の入力値があっても空欄へ戻す。
+      const value = DATE_SKIP[key] ? "" : getDateForSuumo(DATE_OFFSETS[key]);
+      return count + (setReadonlyDate(selector, value) ? 1 : 0);
+    }, 0);
   }
 
   async function selectReportType() {
@@ -1434,16 +1450,20 @@
         <summary style="padding:10px;font-weight:bold;cursor:pointer;user-select:none;color:#112B3C;">日付設定</summary>
         <div style="padding:0 10px 10px;">
           ${[
-          ["申込日", "tm-date-apply", DATE_OFFSETS.apply],
-          ["成約日", "tm-date-contract", DATE_OFFSETS.contract],
-          ["確認日", "tm-date-confirm", DATE_OFFSETS.confirm]
-        ].map(([label, id, value]) => `
-          <div style="display:grid;grid-template-columns:58px 38px 32px 48px 32px 18px;align-items:center;gap:5px;margin:6px 0;">
-            <span>${label}</span><span>今日</span>
-            <button type="button" class="tm-date-minus" data-target="${id}" style="height:29px;cursor:pointer;">−</button>
-            <input id="${id}" type="number" value="${value}" min="-365" max="365" style="width:48px;height:29px;box-sizing:border-box;text-align:center;">
-            <button type="button" class="tm-date-plus" data-target="${id}" style="height:29px;cursor:pointer;">＋</button>
-            <span>日</span>
+          ["申込日", "tm-date-apply", DATE_OFFSETS.apply, DATE_SKIP.apply],
+          ["成約日", "tm-date-contract", DATE_OFFSETS.contract, DATE_SKIP.contract],
+          ["確認日", "tm-date-confirm", DATE_OFFSETS.confirm, DATE_SKIP.confirm]
+        ].map(([label, id, value, skip]) => `
+          <div style="display:flex;align-items:center;gap:5px;margin:6px 0;min-width:0;">
+            <span style="width:40px;flex-shrink:0;font-size:12px;">${label}</span>
+            <label style="display:flex;align-items:center;gap:2px;font-size:11px;white-space:nowrap;cursor:pointer;flex-shrink:0;">
+              <input type="checkbox" class="tm-date-skip" data-target="${id}" ${skip ? "checked" : ""} style="margin:0;">記入しない
+            </label>
+            <span style="font-size:11px;white-space:nowrap;color:#526675;">今日</span>
+            <button type="button" class="tm-date-minus" data-target="${id}" ${skip ? "disabled" : ""} style="height:27px;min-width:23px;cursor:pointer;">−</button>
+            <input id="${id}" type="number" value="${value}" min="-365" max="365" ${skip ? "disabled" : ""} style="width:38px;min-width:0;height:27px;box-sizing:border-box;text-align:center;">
+            <button type="button" class="tm-date-plus" data-target="${id}" ${skip ? "disabled" : ""} style="height:27px;min-width:23px;cursor:pointer;">＋</button>
+            <span style="font-size:11px;">日</span>
           </div>
         `).join("")}
         </div>
@@ -1677,6 +1697,17 @@
       toast(`${converted}項目をまとめて修正しました ✓`);
     };
 
+    panel.querySelectorAll(".tm-date-skip").forEach(checkbox => {
+      checkbox.addEventListener("change", () => {
+        const target = panel.querySelector("#" + checkbox.dataset.target);
+        if (!target) return;
+        target.disabled = checkbox.checked;
+        panel.querySelectorAll(".tm-date-minus, .tm-date-plus").forEach(button => {
+          if (button.dataset.target === checkbox.dataset.target) button.disabled = checkbox.checked;
+        });
+      });
+    });
+
     panel.querySelectorAll(".tm-date-minus, .tm-date-plus").forEach(button => {
       button.onclick = () => {
         const input = document.getElementById(button.dataset.target);
@@ -1716,6 +1747,9 @@
       const applyOffset = Number(document.getElementById("tm-date-apply").value || 0);
       const contractOffset = Number(document.getElementById("tm-date-contract").value || 0);
       const confirmOffset = Number(document.getElementById("tm-date-confirm").value || 0);
+      const applySkip = document.querySelector('input.tm-date-skip[data-target="tm-date-apply"]').checked;
+      const contractSkip = document.querySelector('input.tm-date-skip[data-target="tm-date-contract"]').checked;
+      const confirmSkip = document.querySelector('input.tm-date-skip[data-target="tm-date-confirm"]').checked;
 
       GM_setValue("profile_company", profileCompany);
       GM_setValue("profile_manager1", profileManager1);
@@ -1730,6 +1764,9 @@
       GM_setValue("date_offset_apply", applyOffset);
       GM_setValue("date_offset_contract", contractOffset);
       GM_setValue("date_offset_confirm", confirmOffset);
+      GM_setValue("date_skip_apply", applySkip);
+      GM_setValue("date_skip_contract", contractSkip);
+      GM_setValue("date_skip_confirm", confirmSkip);
 
       PROFILE.company = profileCompany;
       PROFILE.manager1 = profileManager1;
@@ -1742,6 +1779,9 @@
       DATE_OFFSETS.apply = applyOffset;
       DATE_OFFSETS.contract = contractOffset;
       DATE_OFFSETS.confirm = confirmOffset;
+      DATE_SKIP.apply = applySkip;
+      DATE_SKIP.contract = contractSkip;
+      DATE_SKIP.confirm = confirmSkip;
       toast("設定を保存しました ✓");
     };
 
