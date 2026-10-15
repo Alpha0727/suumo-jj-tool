@@ -1701,11 +1701,18 @@
     };
 
     const ieloveGetButton = document.getElementById("tm-ielove-batch-get");
-    if (ieloveGetButton) ieloveGetButton.onclick = () => {
-      startIeloveBatchGet(ieloveGetButton);
-    };
+    if (ieloveGetButton) ieloveGetButton.onclick = () => startIeloveBatchGet(ieloveGetButton);
+    if (ieloveGetButton) {
+      const draft = GM_getValue(IELOVE_BATCH_DRAFT_KEY, null);
+      if (draft && Array.isArray(draft.records) && draft.records.length) activateIeloveBatchEditor(draft);
+    }
 
     document.getElementById("tm-save-setting").onclick = () => {
+      if (location.hostname === "cloud.ielove.jp" && document.getElementById("tm-ielove-batch-heading")?.style.display !== "none") {
+        persistIeloveBatchEditor();
+        toast("この物件の編集内容を保存しました ✓");
+        return;
+      }
       if (updateHalfWidthWarning()) {
         toast("入力内容に修正が必要です。\n「まとめて修正」を押してから保存してください。", 4500);
         return;
@@ -1831,32 +1838,66 @@
     }
   }
 
-  function showIeloveBatchDraft(records) {
-    document.getElementById("tm-ielove-draft")?.remove();
-    const panel = document.createElement("div");
-    panel.id = "tm-ielove-draft";
-    Object.assign(panel.style, { position: "fixed", inset: "5% 5% auto", maxWidth: "680px",
-      maxHeight: "88vh", margin: "0 auto", overflow: "auto", background: "#fff", color: "#112B3C",
-      border: "2px solid #112B3C", borderRadius: "12px", padding: "18px",
-      boxShadow: "0 8px 28px #0003", zIndex: "2147483647", fontSize: "13px" });
-    const title = document.createElement("h3");
-    title.textContent = "取得結果（" + records.length + "件）";
-    const close = document.createElement("button");
-    close.textContent = "閉じる";
-    close.type = "button";
-    close.style.cssText = "float:right;padding:7px 14px;cursor:pointer";
-    close.onclick = () => panel.remove();
-    const info = document.createElement("p");
-    info.textContent = "表示中の物件のみ取得しました。編集画面とSUUMO連携は次の実装段階です。";
-    const list = document.createElement("div");
-    for (const item of records) {
-      const row = document.createElement("div");
-      row.style.cssText = "padding:9px 0;border-bottom:1px solid #ddd";
-      row.textContent = [item.name, item.room, item.address, item.floor, item.managementCompany].filter(Boolean).join(" ／ ");
-      list.appendChild(row);
+
+  const IELOVE_EDIT_FIELDS = [["managementCompany","tm-mgmt-company"],["phone","tm-mgmt-tel"],["manager","tm-manager2"],["room","tm-room"]];
+  let ieloveNormalSnapshot = null;
+  function persistIeloveBatchEditor() {
+    const draft = GM_getValue(IELOVE_BATCH_DRAFT_KEY, null);
+    if (!draft || !Array.isArray(draft.records) || !draft.records.length) return null;
+    const index = Math.max(0, Math.min(Number(draft.index) || 0, draft.records.length - 1));
+    for (const [field,id] of IELOVE_EDIT_FIELDS) {
+      const input = document.getElementById(id);
+      if (input) draft.records[index][field] = input.value;
     }
-    panel.append(close, title, info, list);
-    document.body.appendChild(panel);
+    draft.savedAt = Date.now();
+    GM_setValue(IELOVE_BATCH_DRAFT_KEY, draft);
+    return draft;
+  }
+  function renderIeloveBatchEditor(draft) {
+    const index = Math.max(0, Math.min(Number(draft.index) || 0, draft.records.length - 1));
+    const item = draft.records[index];
+    document.getElementById("tm-ielove-batch-name").textContent = item.name || "物件名未取得";
+    document.getElementById("tm-ielove-batch-progress").textContent = (index+1) + " / " + draft.records.length + "件";
+    document.getElementById("tm-ielove-batch-meta").textContent = [item.room,item.address,item.floor,item.specs,item.rent].filter(Boolean).join(" ／ ");
+    for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = item[field] || "";
+    document.getElementById("tm-ielove-prev").disabled = index === 0;
+    document.getElementById("tm-ielove-next").textContent = index === draft.records.length - 1 ? "SUUMOへ進む →" : "次へ →";
+  }
+  function activateIeloveBatchEditor(draft) {
+    if (!document.getElementById("tm-ielove-batch-heading") || !draft || !draft.records?.length) return;
+    if (!ieloveNormalSnapshot) ieloveNormalSnapshot = Object.fromEntries(IELOVE_EDIT_FIELDS.map(([field,id]) => [field,document.getElementById(id).value]));
+    document.getElementById("tm-ielove-batch-heading").style.display = "block";
+    document.getElementById("tm-ielove-batch-get").style.display = "none";
+    for (const id of ["tm-ielove-prev","tm-ielove-next","tm-ielove-back"]) document.getElementById(id).style.display = "";
+    document.getElementById("tm-ielove-prev").onclick = () => navigateIeloveBatch(-1);
+    document.getElementById("tm-ielove-next").onclick = () => navigateIeloveBatch(1);
+    document.getElementById("tm-ielove-back").onclick = exitIeloveBatchEditor;
+    renderIeloveBatchEditor(draft);
+  }
+  function navigateIeloveBatch(step) {
+    const draft = persistIeloveBatchEditor();
+    if (!draft) return;
+    const index = Number(draft.index) || 0;
+    if (step > 0 && index >= draft.records.length-1) {
+      toast("添削内容を保存しました。SUUMOへの一括引き継ぎは次の開発段階です。", 5500);
+      return;
+    }
+    draft.index = Math.max(0, Math.min(index+step, draft.records.length-1));
+    GM_setValue(IELOVE_BATCH_DRAFT_KEY, draft);
+    renderIeloveBatchEditor(draft);
+  }
+  function exitIeloveBatchEditor() {
+    persistIeloveBatchEditor();
+    document.getElementById("tm-ielove-batch-heading").style.display = "none";
+    document.getElementById("tm-ielove-batch-get").style.display = "";
+    for (const id of ["tm-ielove-prev","tm-ielove-next","tm-ielove-back"]) document.getElementById(id).style.display = "none";
+    if (ieloveNormalSnapshot) {
+      for (const [field,id] of IELOVE_EDIT_FIELDS) document.getElementById(id).value = ieloveNormalSnapshot[field] || "";
+      ieloveNormalSnapshot = null;
+    }
+  }
+  function showIeloveBatchDraft(records) {
+    activateIeloveBatchEditor(GM_getValue(IELOVE_BATCH_DRAFT_KEY, null));
   }
 
   function addMainButtons() {
