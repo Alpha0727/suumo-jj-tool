@@ -1,5 +1,5 @@
 {
-  "version": "7.49.0",
+  "version": "7.50.0",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "SUUMO側の物件切替・選択保存・今後除外・一括指摘開始を追加。一般配布版は変更なし。"
+  "notes": "物件別の管理会社情報を各申告フォームに反映、入力内容照合、重複送信防止、完了・スキップ記録。一般配布版は未変更。"
 }
