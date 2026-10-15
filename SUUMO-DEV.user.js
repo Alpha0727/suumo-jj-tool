@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 DEV
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.51.2
+// @version      7.51.3
 // @description  開発・検証専用版。一般配布版とは独立して更新。実際のSUUMO送信機能あり。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -100,7 +100,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51.2";
+  const SCRIPT_VERSION = "7.51.3";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1958,6 +1958,22 @@
     document.getElementById("tm-ielove-prev").onclick = () => navigateIeloveBatch(-1);
     document.getElementById("tm-ielove-next").onclick = () => navigateIeloveBatch(1);
     document.getElementById("tm-ielove-back").onclick = exitIeloveBatchEditor;
+    // 編集内容はキー入力時点で保存。切り替え後の入力欄は即時反映する。
+    for (const [field,id] of IELOVE_EDIT_FIELDS) {
+      const input = document.getElementById(id);
+      if (!input || input.dataset.ieloveInstantBound === "1") continue;
+      input.dataset.ieloveInstantBound = "1";
+      input.addEventListener("input", () => {
+        if (document.getElementById("tm-ielove-batch-heading")?.style.display === "none") return;
+        if (field === "room") {
+          const active = GM_getValue(IELOVE_BATCH_DRAFT_KEY, null);
+          const item = active?.records?.[active.index || 0];
+          if (item) document.getElementById("tm-ielove-batch-name").textContent =
+            (item.name || "物件名未取得") + " ／ " + input.value.replace(/（非公開）|\\(非公開\\)/g, "").trim();
+        }
+        persistIeloveBatchEditor();
+      });
+    }
     renderIeloveBatchEditor(draft);
   }
 
@@ -2016,8 +2032,9 @@
       return;
     }
     draft.index = Math.max(0, Math.min(index+step, draft.records.length-1));
-    GM_setValue(IELOVE_BATCH_DRAFT_KEY, draft);
+    // まず表示を同期的に切り替え、次に保存する。クリック直後に新物件を表示。
     renderIeloveBatchEditor(draft);
+    GM_setValue(IELOVE_BATCH_DRAFT_KEY, draft);
   }
   function exitIeloveBatchEditor() {
     persistIeloveBatchEditor();
