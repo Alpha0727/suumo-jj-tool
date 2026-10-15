@@ -1,5 +1,5 @@
 {
-  "version": "7.51.3",
+  "version": "7.51.4",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "いえらぶ一括添削画面で切替クリック直後に物件情報表示、入力時即保存。一般配布版は未変更。"
+  "notes": "物件切替時に入力警告を即再判定・通常画面へ戻る際に警告を再判定。通常画面の3ボタンを幅いっぱいに均等配置。一般配布版は変更なし。"
 }
