@@ -1,5 +1,5 @@
 {
-  "version": "7.52.1",
+  "version": "7.52.2",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "SUUMO会社選択の下部3ボタンを横幅いっぱいに配置。掲載会社0社と確認できた検索結果を自動スキップ。一般配布版は変更なし。"
+  "notes": "設定の×・閉じる・指摘設定ボタンで閉じた場合、一括添削モードを終了し次回は通常画面で開く。編集内容は保存。一般配布版は変更なし。"
 }
