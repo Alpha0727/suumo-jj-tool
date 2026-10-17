@@ -2270,7 +2270,9 @@
   function isConfirmedNoResultMessage() {
     if (document.readyState !== "complete") return false;
     const message = document.body?.innerText || "";
-    return /条件に(?:あう|合う|一致する)物件がありません|条件にあう物件はありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?\\s*0\\s*件|該当物件(?:は)?\\s*0\\s*件/.test(message);
+    // SUUMOの「条件にあう物件がありません」を優先し、0件表記にも対応。
+    const zeroCount = new RegExp("検索結果(?:は)?\\s*0\\s*件|該当物件(?:は)?\\s*0\\s*件");
+    return /条件に(?:あう|合う|一致する)物件がありません|条件にあう物件はありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(message) || zeroCount.test(message);
   }
 
   // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
