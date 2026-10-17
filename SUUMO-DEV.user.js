@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.52.5
+// @version      7.53.0
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.52.5";
+  const SCRIPT_VERSION = "7.53.0";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2247,140 +2247,176 @@
     return [...map.values()];
   }
 
-  // 検索結果が確定した0社だけ自動スキップし、読み込み失敗は保留する。
-  function hasConfirmedEmptyIeloveSearch() {
-    if (!isIeloveSuumoSearchPage() || document.readyState !== "complete") return false;
-    if (getIeloveSearchCompanies().length) return false;
-    const cards = [...document.querySelectorAll(".property-body")];
-    const text = document.body?.innerText || "";
-    const noResults = /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?0件|該当物件(?:は)?0件/.test(text);
-    const noCompany = cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'));
-    return noResults || noCompany;
-  }
-  async function autoSkipEmptyIeloveSearch() {
-    if (!hasConfirmedEmptyIeloveSearch()) return false;
-    await sleep(350);
-    if (!hasConfirmedEmptyIeloveSearch()) return false;
+
+  // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
+  let ieloveCollecting = false;
+  async function collectIeloveSuumoResults() {
+    if (ieloveCollecting || isBatchActive() || !isIeloveSuumoSearchPage()) return;
     const handoff = getIeloveHandoff();
-    if (!handoff || isBatchActive()) return false;
+    if (!handoff) return;
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
-    if (new URL(location.href).searchParams.get("fw") !== new URL(handoff.searches[index].url).searchParams.get("fw")) return false;
+    if (new URL(location.href).searchParams.get("fw") !== new URL(handoff.searches[index].url).searchParams.get("fw")) return;
     const selections = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
-    selections[index] = { __companies: [], __emptyResult: true };
-    GM_setValue(IELOVE_SUUMO_CHOICES_KEY, selections);
-    toast("掲載会社なし：指摘対象0件のため次の物件へ進みます（" + (index + 1) + "/" + handoff.records.length + "）", 1800);
-    if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
-    else startIeloveSuumoReporting();
-    return true;
+    if (Array.isArray(selections[index]?.__companies)) {
+      if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
+      else openIeloveSuumoSelection();
+      return;
+    }
+    ieloveCollecting = true;
+    try {
+      const started = Date.now();
+      let companies = [];
+      let confirmedEmpty = false;
+      while (Date.now() - started < 9000) {
+        companies = getIeloveSearchCompanies();
+        const cards = [...document.querySelectorAll(".property-body")];
+        const bodyText = document.body?.innerText || "";
+        const noResults = /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?0件|該当物件(?:は)?0件/.test(bodyText);
+        confirmedEmpty = document.readyState === "complete" && !companies.length &&
+          (noResults || (cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'))));
+        if ((companies.length && document.readyState === "complete") || confirmedEmpty) break;
+        await sleep(180);
+      }
+      // 描画途中の会社リストを保存しないように、短い安定待ちを置く。
+      await sleep(350);
+      const current = getIeloveSearchCompanies();
+      if (current.length) companies = current;
+      else if (!confirmedEmpty) {
+        showIeloveCollectionError(index);
+        return;
+      }
+      const latest = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+      latest[index] = { __companies:companies, __collected:true, __emptyResult:!companies.length };
+      GM_setValue(IELOVE_SUUMO_CHOICES_KEY, latest);
+      toast("会社情報を収集：" + (index + 1) + " / " + handoff.records.length + "物件", 1200);
+      if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
+      else openIeloveSuumoSelection();
+    } finally {
+      ieloveCollecting = false;
+    }
+  }
+
+  function showIeloveCollectionError(index) {
+    document.getElementById("tm-ielove-suumo-selection")?.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "tm-ielove-suumo-selection";
+    overlay.style.cssText = "position:fixed;inset:0;background:#0007;z-index:2147483647;display:flex;align-items:center;justify-content:center";
+    const box = document.createElement("div");
+    box.style.cssText = "width:460px;max-width:92vw;background:white;border-radius:12px;padding:24px;color:#222;font-family:sans-serif";
+    const title = document.createElement("h3");
+    title.textContent = (index + 1) + "件目の検索結果を確認できませんでした";
+    const message = document.createElement("p");
+    message.textContent = "会社0件とは判定せず停止しました。検索結果を確認してから再取得してください。";
+    const retry = document.createElement("button");
+    retry.textContent = "再取得する";
+    retry.style.cssText = "padding:12px 22px;background:#205375;color:white;border:0;border-radius:8px;cursor:pointer";
+    retry.onclick = () => { overlay.remove(); collectIeloveSuumoResults(); };
+    box.append(title,message,retry);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
   }
 
   function openIeloveSuumoSelection() {
     const handoff = getIeloveHandoff();
-    if (!handoff || !isIeloveSuumoSearchPage() || isBatchActive()) return;
-    const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
-    const url = new URL(location.href);
-    const expected = new URL(handoff.searches[index].url);
-    if (url.searchParams.get("fw") !== expected.searchParams.get("fw")) return;
-    document.getElementById("tm-ielove-suumo-selection")?.remove();
+    if (!handoff || isBatchActive() || !isIeloveSuumoSearchPage()) return;
     const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+    if (handoff.records.some((_,i) => !Array.isArray(choices[i]?.__companies))) return;
+    document.getElementById("tm-ielove-suumo-selection")?.remove();
     const exclusions = new Set(GM_getValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, []));
-    const companies = getIeloveSearchCompanies();
-    const modes = { ...(choices[index] || {}) };
+    const modes = {};
+    handoff.records.forEach((_,i) => { modes[i] = {...choices[i]}; });
     const overlay = document.createElement("div");
     overlay.id = "tm-ielove-suumo-selection";
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif";
+    overlay.style.cssText = "position:fixed;inset:0;background:#0007;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif";
     const shell = document.createElement("div");
-    shell.style.cssText = "width:800px;max-width:94vw;max-height:90vh;background:#fff;border-radius:14px;box-shadow:0 12px 35px #0005;display:flex;flex-direction:column;overflow:hidden;color:#222";
+    shell.style.cssText = "width:850px;max-width:95vw;height:86vh;max-height:900px;background:#fff;border-radius:14px;box-shadow:0 12px 35px #0005;display:flex;flex-direction:column;overflow:hidden;color:#222";
     const head = document.createElement("div");
-    head.style.cssText = "padding:16px 18px;border-bottom:1px solid #ddd";
+    head.style.cssText = "padding:17px 20px;border-bottom:1px solid #ddd;flex-shrink:0";
     const title = document.createElement("div");
-    title.style.cssText = "font-size:21px;font-weight:bold";
     title.textContent = "SUUMO 一括指摘対象の選択";
+    title.style.cssText = "font-weight:bold;font-size:21px";
     const subtitle = document.createElement("div");
-    subtitle.style.cssText = "font-size:13px;color:#666;margin-top:6px";
-    const record = handoff.records[index];
-    subtitle.textContent = (index + 1) + " / " + handoff.records.length + "件　" + (record.name || "物件名未取得") + "　" + (record.room || "");
+    subtitle.textContent = handoff.records.length + "物件の掲載会社をまとめて選択";
+    subtitle.style.cssText = "font-size:13px;color:#666;margin-top:5px";
     head.append(title,subtitle);
     const list = document.createElement("div");
-    list.style.cssText = "overflow-y:auto;flex:1;padding:6px 15px";
-    const styles = {
-      report:"background:#1677ff;color:white;border-color:#1677ff",
-      once:"background:#fa8c16;color:white;border-color:#fa8c16",
-      permanent:"background:#d9363e;color:white;border-color:#d9363e"
+    list.style.cssText = "overflow-y:auto;flex:1;min-height:0;padding:12px 18px";
+    const choiceStyles = {report:"background:#1677ff;color:#fff;border-color:#1677ff",once:"background:#fa8c16;color:#fff;border-color:#fa8c16",permanent:"background:#d9363e;color:#fff;border-color:#d9363e"};
+    const save = () => {
+      const latest = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+      handoff.records.forEach((_,i) => { latest[i] = {...modes[i],__companies:choices[i].__companies}; });
+      GM_setValue(IELOVE_SUUMO_CHOICES_KEY, latest);
+      GM_setValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, [...exclusions]);
     };
-    const updateButtons = () => {
+    const update = () => {
       list.querySelectorAll("[data-company-key]").forEach(row => {
         const key = row.dataset.companyKey;
-        const effective = exclusions.has(key) ? "permanent" : (modes[key] || "report");
+        const index = Number(row.dataset.propertyIndex);
+        const effective = exclusions.has(key) ? "permanent" : (modes[index][key] || "report");
         row.querySelectorAll("button[data-choice]").forEach(button => {
           const mode = button.dataset.choice;
-          button.style.cssText = "flex:1;min-width:0;padding:10px 3px;border:2px solid #ddd;border-radius:8px;background:#fff;color:#333;font-weight:bold;cursor:pointer;font-size:12px";
-          if (mode === effective) button.style.cssText += ";" + styles[mode];
-          button.textContent = (mode === effective ? "✓ " : "") + ({report:"指摘する",once:"今回だけ除外",permanent:"今後も除外"}[mode]);
+          button.style.cssText = "flex:1;min-width:0;padding:10px 3px;border:2px solid #ddd;border-radius:8px;background:white;color:#333;font-weight:bold;cursor:pointer;font-size:12px";
+          if (mode === effective) button.style.cssText += ";" + choiceStyles[mode];
+          button.textContent = (effective === mode ? "✓ " : "") + ({report:"指摘する",once:"今回だけ除外",permanent:"今後も除外"}[mode]);
         });
       });
     };
-    for (const company of companies) {
-      const row = document.createElement("div");
-      row.dataset.companyKey = company.key;
-      row.style.cssText = "padding:12px 0;border-bottom:1px solid #e5e5e5";
-      const label = document.createElement("div");
-      label.style.cssText = "font-size:15px;font-weight:bold;margin-bottom:8px";
-      label.textContent = company.name + "（掲載 " + company.urls.length + "件）";
-      const buttons = document.createElement("div");
-      buttons.style.cssText = "display:flex;gap:7px";
-      for (const mode of ["report","once","permanent"]) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.dataset.choice = mode;
-        button.onclick = () => {
-          if (mode === "permanent") exclusions.add(company.key);
-          else exclusions.delete(company.key);
-          if (mode !== "permanent") modes[company.key] = mode;
-          GM_setValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, [...exclusions]);
-          updateButtons();
-        };
-        buttons.appendChild(button);
+    handoff.records.forEach((record,index) => {
+      const section = document.createElement("section");
+      section.style.cssText = "padding:14px;margin-bottom:12px;border:1px solid #dce3e8;border-radius:12px;background:#fff";
+      const heading = document.createElement("div");
+      heading.textContent = (index + 1) + ". " + (record.name || "物件名未取得") + " ／ " + (record.room || "");
+      heading.style.cssText = "font-weight:bold;font-size:16px;margin-bottom:10px";
+      section.appendChild(heading);
+      const companies = choices[index].__companies;
+      if (!companies.length) {
+        const empty = document.createElement("div");
+        empty.textContent = "掲載会社なし・指摘対象0件";
+        empty.style.cssText = "color:#777;font-size:13px;padding:6px 0";
+        section.appendChild(empty);
       }
-      row.append(label,buttons);
-      list.appendChild(row);
-    }
-    if (!companies.length) {
-      const empty = document.createElement("p");
-      empty.textContent = "掲載会社が見つかりませんでした。検索結果を確認してください。";
-      list.appendChild(empty);
-    }
-    const foot = document.createElement("div");
-    foot.style.cssText = "padding:14px 18px;border-top:1px solid #ddd;background:#fafafa;display:flex;gap:8px;flex-wrap:nowrap;width:100%;box-sizing:border-box";
-    const makeButton = (label, primary, fn) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = label;
-      button.style.cssText = "flex:1 1 0;min-width:0;padding:12px 6px;border:1px solid #ccd3da;border-radius:8px;cursor:pointer;font-weight:bold;font-size:13px;white-space:nowrap;" +
-        (primary ? "background:#205375;color:#fff;border:0" : "background:#fff");
-      button.onclick = fn;
-      foot.appendChild(button);
-      return button;
-    };
-    const save = () => {
-      const latest = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
-      latest[index] = { ...modes, __companies:companies };
-      GM_setValue(IELOVE_SUUMO_CHOICES_KEY, latest);
-    };
-    makeButton("← 前へ", false, () => {
-      save();
-      if (index > 0) navigateIeloveSuumo(-1);
-    }).disabled = index === 0;
-    makeButton(index === handoff.records.length - 1 ? "選択を終えて一括指摘へ" : "次へ →", true, () => {
-      save();
-      if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
-      else startIeloveSuumoReporting();
+      companies.forEach(company => {
+        const row = document.createElement("div");
+        row.dataset.companyKey = company.key;
+        row.dataset.propertyIndex = index;
+        row.style.cssText = "padding:9px 0;border-top:1px solid #eee";
+        const label = document.createElement("div");
+        label.textContent = company.name + "（掲載 " + company.urls.length + "件）";
+        label.style.cssText = "font-size:14px;font-weight:bold;margin-bottom:6px";
+        const buttons = document.createElement("div");
+        buttons.style.cssText = "display:flex;gap:7px";
+        for (const mode of ["report","once","permanent"]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.choice = mode;
+          button.onclick = () => {
+            if (mode === "permanent") exclusions.add(company.key);
+            else { exclusions.delete(company.key); modes[index][company.key] = mode; }
+            save();
+            update();
+          };
+          buttons.appendChild(button);
+        }
+        row.append(label,buttons);
+        section.appendChild(row);
+      });
+      list.appendChild(section);
     });
-    makeButton("閉じる",false, () => { save(); overlay.remove(); });
-    updateButtons();
-    shell.append(head,list,foot);
+    const footer = document.createElement("div");
+    footer.style.cssText = "padding:14px 18px;background:#fafafa;border-top:1px solid #ddd;display:flex;gap:10px;flex-shrink:0";
+    const start = document.createElement("button");
+    start.textContent = "選択を終えて一括指摘へ";
+    start.style.cssText = "flex:2;padding:13px 12px;background:#205375;color:white;border:0;border-radius:8px;font-weight:bold;cursor:pointer";
+    start.onclick = () => { save(); startIeloveSuumoReporting(); };
+    const close = document.createElement("button");
+    close.textContent = "閉じる";
+    close.style.cssText = "flex:1;padding:13px 12px;background:white;border:1px solid #ccd3da;border-radius:8px;font-weight:bold;cursor:pointer";
+    close.onclick = () => { save(); overlay.remove(); };
+    footer.append(start,close);
+    shell.append(head,list,footer);
     overlay.appendChild(shell);
     document.body.appendChild(overlay);
+    update();
   }
 
   function navigateIeloveSuumo(delta) {
@@ -2637,11 +2673,7 @@
     if (!requireProfileManager()) return;
 
     if (!isBatchActive() && isIeloveSuumoSearchPage() && getIeloveHandoff()) {
-      await Promise.race([
-        waitForReadyElement(".property-body", 2500),
-        waitForReadyElement("body", 2500, () => hasConfirmedEmptyIeloveSearch())
-      ]);
-      if (!(await autoSkipEmptyIeloveSearch())) openIeloveSuumoSelection();
+      await collectIeloveSuumoResults();
     }
 
     if (!isBatchActive()) return;
