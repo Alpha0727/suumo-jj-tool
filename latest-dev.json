@@ -1,5 +1,5 @@
 {
-  "version": "7.52.5",
+  "version": "7.53.0",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "基本設定の担当者名を今回の更新時に一度だけ空欄へリセット。担当者名の入力・保存を必須にし、未設定では指摘処理を開始しない。"
+  "notes": "いえらぶ連携のSUUMO掲載会社を全物件分自動収集し、1画面の縦スクロール一覧で指摘対象を選択。0件は一覧表示、未取得は停止。"
 }
