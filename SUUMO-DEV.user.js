@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.2
+// @version      7.54.3
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.2";
+  const SCRIPT_VERSION = "7.54.3";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2124,8 +2124,10 @@
     const specs = String(record.specs || "").normalize("NFKC");
     const floor = String(record.floor || "").normalize("NFKC");
     const rent = String(record.rent || "").normalize("NFKC");
-    const addressMatch = address.match(/^(.+?[0-9]+)(?:丁目|[-－ー].*)/);
-    const shortAddress = addressMatch ? addressMatch[1] : address.replace(/丁目.*$/, "").trim();
+    const chome = address.match(/^(.+?\d+)丁目/);
+    // 丁目がある場合は従来どおり丁目番号まで残す。
+    // 丁目がない住所は番地の先頭から落とす（千住宮元町12-11 → 千住宮元町）。
+    const shortAddress = (chome ? chome[1] : address.replace(/\s*\d+(?:[-－ー]\d+)*(?:番地?.*|号.*)?\s*$/, "")).trim();
     const built = specs.match(/(\d{4})年\s*(\d{1,2})月/);
     const floorNumber = floor.match(/(\d+)階/);
     const area = specs.match(/(\d+(?:\.\d+)?)\s*(?:㎡|m2|m²)/i);
