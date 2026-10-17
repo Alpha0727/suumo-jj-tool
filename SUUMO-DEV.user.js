@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.1
+// @version      7.54.2
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.1";
+  const SCRIPT_VERSION = "7.54.2";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2225,29 +2225,42 @@
     return href.replace(/[?#].*$/, "").replace(/\/$/, "") || "name:" + name;
   }
 
+  // SUUMOのカード内リンク・IDの表記差に対応しつつ、IDを確定できない掲載は送信対象にしない。
   function getIeloveSearchCompanies() {
     const map = new Map();
-    for (const card of document.querySelectorAll(".property-body")) {
-      const link = card.querySelector('a[href^="/chintai/kaisha/"]');
-      const name = link?.textContent?.trim();
-      if (!name) continue;
-      const key = ieloveCompanyKey(card, name);
-      const clip = card.querySelector('input[id="clipkey"]');
-      let propertyId = clip?.value?.trim() || "";
-      if (!propertyId) {
-        const rel = card.querySelector("a.js-singleShiryoSeikyu[rel]")?.getAttribute("rel") || "";
-        propertyId = rel.match(/(?:^|_)(\d{8,})$/)?.[1] || "";
+    const cards = document.querySelectorAll(".property-body");
+    for (const card of cards) {
+      const link = card.querySelector('a[href*="/chintai/kaisha/"]');
+      const name = (link?.textContent || link?.getAttribute("title") || "").trim();
+      if (!name || !link) continue;
+      const href = link.getAttribute("href") || "";
+      const key = href.replace(/^https?:\/\/[^/]+/i, "").replace(/[?#].*$/, "").replace(/\/$/, "") || "name:" + name;
+      const clip = card.querySelector('input[id="clipkey"],input[name="clipkey"]');
+      const candidates = [clip?.value, ...[...card.querySelectorAll('a[href*="/chintai/bc_"],a.js-singleShiryoSeikyu[rel]')].map(a => a.getAttribute("href") || a.getAttribute("rel") || "")];
+      const ids = new Set();
+      for (const raw of candidates) {
+        const value = String(raw || "").trim();
+        const match = value.match(/\/chintai\/bc_(\d+)\/?/i) || value.match(/(?:^|_)(\d{8,})$/);
+        if (match) ids.add(match[1]);
+        else if (/^\d{8,}$/.test(value)) ids.add(value);
       }
-      if (!map.has(key)) map.set(key, { key, name, urls: [] });
-      if (propertyId) {
-        const url = "https://suumo.jp/chintai/bc_" + propertyId + "/";
-        const entry = map.get(key);
-        if (!entry.urls.includes(url)) entry.urls.push(url);
+      if (!map.has(key)) map.set(key, {key,name,urls:[]});
+      const item = map.get(key);
+      for (const id of ids) {
+        const url = "https://suumo.jp/chintai/bc_" + id + "/";
+        if (!item.urls.includes(url)) item.urls.push(url);
       }
     }
     return [...map.values()];
   }
 
+  function getIeloveCollectionDiagnostics() {
+    const cards = [...document.querySelectorAll(".property-body")];
+    const links = cards.filter(card => card.querySelector('a[href*="/chintai/kaisha/"]')).length;
+    const groups = getIeloveSearchCompanies();
+    const listings = groups.reduce((n,g) => n + g.urls.length,0);
+    return {cards:cards.length, cardsWithCompanyLink:links, companies:groups.length, listings};
+  }
 
   // 工程ごとの時間を保存し、SUUMO画面をまたいでも計測する。
   const ADVANCED_TIMING_KEY = "suumo_advanced_timing_v1";
@@ -2298,14 +2311,18 @@
       while (Date.now() - started < 9000) {
         companies = getIeloveSearchCompanies();
         confirmedEmpty = !companies.length && isConfirmedNoResultMessage();
-        if ((companies.length && document.readyState === "complete") || confirmedEmpty) break;
+        if ((companies.some(company => company.urls.length) && document.readyState === "complete") || confirmedEmpty) break;
         await sleep(100);
       }
       // 描画途中の会社リストを保存しないように、短い安定待ちを置く。
       await sleep(350);
       const current = getIeloveSearchCompanies();
       if (current.length) companies = current;
-      else if (!confirmedEmpty || !isConfirmedNoResultMessage()) {
+      if (companies.length && (!companies.some(company => company.urls.length) || companies.some(company => !company.urls.length))) {
+        showIeloveCollectionError(index);
+        return;
+      }
+      if (!companies.length && (!confirmedEmpty || !isConfirmedNoResultMessage())) {
         showIeloveCollectionError(index);
         return;
       }
@@ -2331,7 +2348,8 @@
     const title = document.createElement("h3");
     title.textContent = (index + 1) + "件目の検索結果を確認できませんでした";
     const message = document.createElement("p");
-    message.textContent = "会社0件とは判定せず停止しました。検索結果を確認してから再取得してください。";
+    const stats = getIeloveCollectionDiagnostics();
+    message.textContent = "検索画面の物件カード " + stats.cards + "件、会社リンク付き " + stats.cardsWithCompanyLink + "件、取得会社 " + stats.companies + "社、掲載URL " + stats.listings + "件。結果を正しく取得できていないため停止しました。検索結果を確認してください。";
     const retry = document.createElement("button");
     retry.textContent = "再取得する";
     retry.style.cssText = "padding:12px 22px;background:#205375;color:white;border:0;border-radius:8px;cursor:pointer";
