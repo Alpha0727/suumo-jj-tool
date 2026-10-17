@@ -2269,10 +2269,10 @@
   // SUUMOの0件表示は「条件にあう物件がありません」等、複数表記に対応。
   function isConfirmedNoResultMessage() {
     if (document.readyState !== "complete") return false;
-    const message = document.body?.innerText || "";
-    // SUUMOの「条件にあう物件がありません」を優先し、0件表記にも対応。
-    const zeroCount = new RegExp("検索結果(?:は)?\\s*0\\s*件|該当物件(?:は)?\\s*0\\s*件");
-    return /条件に(?:あう|合う|一致する)物件がありません|条件にあう物件はありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(message) || zeroCount.test(message);
+    if (document.querySelector(".property-body")) return false;
+    const text = document.body?.innerText || "";
+    // 「不動産会社0件」は、賃貸物件0件とは限らない。
+    return /条件に(?:あう|合う|一致する)物件がありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text);
   }
 
   // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
@@ -2297,10 +2297,7 @@
       let confirmedEmpty = false;
       while (Date.now() - started < 9000) {
         companies = getIeloveSearchCompanies();
-        const cards = [...document.querySelectorAll(".property-body")];
-        const noResults = !companies.length && isConfirmedNoResultMessage();
-        confirmedEmpty = document.readyState === "complete" && !companies.length &&
-          (noResults || (cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'))));
+        confirmedEmpty = !companies.length && isConfirmedNoResultMessage();
         if ((companies.length && document.readyState === "complete") || confirmedEmpty) break;
         await sleep(100);
       }
@@ -2308,8 +2305,7 @@
       await sleep(350);
       const current = getIeloveSearchCompanies();
       if (current.length) companies = current;
-      else if (!confirmedEmpty || !(isConfirmedNoResultMessage() ||
-        [...document.querySelectorAll(".property-body")].some(card => !card.querySelector('a[href^="/chintai/kaisha/"]')))) {
+      else if (!confirmedEmpty || !isConfirmedNoResultMessage()) {
         showIeloveCollectionError(index);
         return;
       }
