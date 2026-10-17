@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.3
+// @version      7.54.4
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.3";
+  const SCRIPT_VERSION = "7.54.4";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -1886,7 +1886,8 @@
     const batchButton = document.getElementById("tm-settings-batch");
     if (batchButton) batchButton.onclick = () => {
       panel.remove();
-      openCompanySelection();
+      if (isIeloveSelectionReady()) openIeloveSuumoSelection();
+      else openCompanySelection();
     };
 
     const autofillButton = document.getElementById("tm-settings-autofill");
@@ -2159,7 +2160,15 @@
       toast("SUUMO検索条件不足：" + results.map((x,i) => x.error ? (i+1)+"件目 "+x.error : "").filter(Boolean).join("／"), 9000);
       return;
     }
-    const handoff = { records:draft.records, searches:results, index:0, createdAt:Date.now() };
+    // 新しく開始した上位版一括取得の検索タブだけを識別する。
+    const createdAt = Date.now();
+    const token = String(createdAt);
+    results.forEach(result => {
+      const url = new URL(result.url);
+      url.searchParams.set("suumo_jj_batch", token);
+      result.url = url.href;
+    });
+    const handoff = { records:draft.records, searches:results, index:0, createdAt, token };
     GM_deleteValue("ielove_suumo_choices_v1");
     GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
     const tab = window.open(results[0].url, "_blank");
@@ -2219,6 +2228,32 @@
 
   function isIeloveSuumoSearchPage() {
     return location.hostname === "suumo.jp" && location.pathname.includes("/jj/chintai/ichiran/");
+  }
+
+  function isAuthorizedIeloveBatchSearch(handoff = getIeloveHandoff()) {
+    if (!handoff?.token || !isIeloveSuumoSearchPage()) return false;
+    const url = new URL(location.href);
+    // iimonの虫眼鏡や一般の検索結果から自動起動しない。
+    if (url.searchParams.has("iimon")) return false;
+    return url.searchParams.get("suumo_jj_batch") === String(handoff.token);
+  }
+
+  function isIeloveSelectionReady() {
+    if (!isAuthorizedIeloveBatchSearch() || isBatchActive()) return false;
+    const handoff = getIeloveHandoff();
+    const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
+    return handoff.records.every((_, i) => Array.isArray(choices[i]?.__companies));
+  }
+
+  function showIeloveSelectionLaunchButton() {
+    if (!isIeloveSelectionReady() || document.getElementById("tm-ielove-ready-button")) return;
+    const button = document.createElement("button");
+    button.id = "tm-ielove-ready-button";
+    button.type = "button";
+    button.textContent = "一括で指摘に進む";
+    button.style.cssText = "position:fixed;left:145px;bottom:16px;z-index:2147483646;height:36px;padding:0 17px;border:0;border-radius:10px;background:#205375;color:white;font-size:13px;font-weight:bold;cursor:pointer;box-shadow:0 3px 12px rgba(17,43,60,.28)";
+    button.onclick = () => openIeloveSuumoSelection();
+    document.body.appendChild(button);
   }
 
   function ieloveCompanyKey(card, name) {
@@ -2293,7 +2328,7 @@
   // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
   let ieloveCollecting = false;
   async function collectIeloveSuumoResults() {
-    if (ieloveCollecting || isBatchActive() || !isIeloveSuumoSearchPage()) return;
+    if (ieloveCollecting || isBatchActive() || !isAuthorizedIeloveBatchSearch()) return;
     const handoff = getIeloveHandoff();
     if (!handoff) return;
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
@@ -2301,7 +2336,7 @@
     const selections = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
     if (Array.isArray(selections[index]?.__companies)) {
       if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
-      else openIeloveSuumoSelection();
+      else showIeloveSelectionLaunchButton();
       return;
     }
     ieloveCollecting = true;
@@ -2334,7 +2369,7 @@
       markAdvancedTiming("search-collect-complete", String(index + 1) + "物件 / " + companies.length + "社");
       toast("会社情報を収集：" + (index + 1) + " / " + handoff.records.length + "物件", 1200);
       if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
-      else openIeloveSuumoSelection();
+      else showIeloveSelectionLaunchButton();
     } finally {
       ieloveCollecting = false;
     }
@@ -2363,7 +2398,7 @@
 
   function openIeloveSuumoSelection() {
     const handoff = getIeloveHandoff();
-    if (!handoff || isBatchActive() || !isIeloveSuumoSearchPage()) return;
+    if (!handoff || isBatchActive() || !isIeloveSelectionReady()) return;
     const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
     if (handoff.records.some((_,i) => !Array.isArray(choices[i]?.__companies))) return;
     document.getElementById("tm-ielove-suumo-selection")?.remove();
@@ -2721,8 +2756,9 @@
     addMainButtons();
     if (!requireProfileManager()) return;
 
-    if (!isBatchActive() && isIeloveSuumoSearchPage() && getIeloveHandoff()) {
+    if (!isBatchActive() && isAuthorizedIeloveBatchSearch()) {
       await collectIeloveSuumoResults();
+      showIeloveSelectionLaunchButton();
     }
 
     if (!isBatchActive()) return;
