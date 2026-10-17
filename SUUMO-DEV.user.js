@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.53.1
+// @version      7.54.0
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.53.1";
+  const SCRIPT_VERSION = "7.54.0";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -519,9 +519,11 @@
       const currentProfile = activeIeloveProfile();
       if (getIeloveExecution() && !currentIeloveExecutionItem()) throw new Error("物件ごとの申告情報と掲載URLが一致しません");
       if (currentProfile && validateIeloveProfile(currentProfile)) throw new Error("必要項目が不足：" + validateIeloveProfile(currentProfile));
+      markAdvancedTiming("form-fill-start");
       const fillStarted = performance.now();
       const count = await autofill(false);
-      console.info("[SUUMO JJ DEV] 自動入力:", Math.round(performance.now() - fillStarted) + "ms");
+      console.info("[SUUMO JJ 上位版] 自動入力:", Math.round(performance.now() - fillStarted) + "ms");
+      markAdvancedTiming("form-fill-complete", count + "項目");
       if (currentProfile && ieloveFormMismatch(currentProfile)) throw new Error("入力結果が一致しません：" + ieloveFormMismatch(currentProfile));
 
       setBatchError(false);
@@ -1030,16 +1032,10 @@
     setConfirmReady(false);
     updateBatchPanel();
     toast("確認画面を確認しました。\n送信します…", 1800);
-    await sleep(350);
-
-    let sendLink = null;
-    for (let i = 0; i < 30; i++) {
-      sendLink = document.querySelector(
-        'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
-      );
-      if (sendLink) break;
-      await sleep(200);
-    }
+    const sendLink = await waitForReadyElement(
+      'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]', 6000,
+      el => el.isConnected && !el.hasAttribute("disabled")
+    );
 
     if (!sendLink) {
       setSubmitting(false);
@@ -1049,10 +1045,12 @@
       return;
     }
 
+    // 最終送信前の安全待機は維持。
     await sleep(250);
-    if (!isBatchActive() || !isConfirmPage() || confirmSendStarted) return;
+    if (!isBatchActive() || !isConfirmPage() || confirmSendStarted || !sendLink.isConnected) return;
     confirmSendStarted = true;
     saveIeloveExecutionStatus("sending");
+    markAdvancedTiming("final-send-clicked");
     sendLink.click();
   }
 
@@ -1061,6 +1059,7 @@
     const stage = getBatchStage();
     if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
     setBatchStage(STAGES.COMPLETE);
+    markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
     setSubmitting(true);
     setConfirmReady(false);
@@ -1168,8 +1167,10 @@
     updateBatchPanel();
     toast(`掲載ページ ${index + 1}/${urls.length}\n申告フォームを開きます…`);
 
+    markAdvancedTiming("listing-page-ready");
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
     if (link && isBatchActive() && isListingPage()) {
+      markAdvancedTiming("listing-report-link-clicked");
       link.click();
       return;
     }
@@ -2248,6 +2249,23 @@
   }
 
 
+  // 工程ごとの時間を保存し、SUUMO画面をまたいでも計測する。
+  const ADVANCED_TIMING_KEY = "suumo_advanced_timing_v1";
+  const ADVANCED_TIMING_LOG_KEY = "suumo_advanced_timing_log_v1";
+  function markAdvancedTiming(stage, details = "") {
+    const now = Date.now();
+    const prev = GM_getValue(ADVANCED_TIMING_KEY, null);
+    if (prev && prev.startedAt && now >= prev.startedAt) {
+      const history = GM_getValue(ADVANCED_TIMING_LOG_KEY, []);
+      const record = { from:prev.stage, to:stage, ms:now-prev.startedAt, at:now, details };
+      const records = Array.isArray(history) ? history.slice(-99) : [];
+      records.push(record);
+      GM_setValue(ADVANCED_TIMING_LOG_KEY, records);
+      console.info("[SUUMO JJ 上位版] 工程:", record.from, "→", stage, record.ms + "ms", details);
+    }
+    GM_setValue(ADVANCED_TIMING_KEY, { stage, startedAt:now });
+  }
+
   // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
   let ieloveCollecting = false;
   async function collectIeloveSuumoResults() {
@@ -2264,18 +2282,19 @@
     }
     ieloveCollecting = true;
     try {
+      markAdvancedTiming("search-collect-start", String(index + 1));
       const started = Date.now();
       let companies = [];
       let confirmedEmpty = false;
       while (Date.now() - started < 9000) {
         companies = getIeloveSearchCompanies();
         const cards = [...document.querySelectorAll(".property-body")];
-        const bodyText = document.body?.innerText || "";
+        const bodyText = !companies.length && document.readyState === "complete" ? (document.body?.innerText || "") : "";
         const noResults = /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?0件|該当物件(?:は)?0件/.test(bodyText);
         confirmedEmpty = document.readyState === "complete" && !companies.length &&
           (noResults || (cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'))));
         if ((companies.length && document.readyState === "complete") || confirmedEmpty) break;
-        await sleep(180);
+        await sleep(100);
       }
       // 描画途中の会社リストを保存しないように、短い安定待ちを置く。
       await sleep(350);
@@ -2288,6 +2307,7 @@
       const latest = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
       latest[index] = { __companies:companies, __collected:true, __emptyResult:!companies.length };
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY, latest);
+      markAdvancedTiming("search-collect-complete", String(index + 1) + "物件 / " + companies.length + "社");
       toast("会社情報を収集：" + (index + 1) + " / " + handoff.records.length + "物件", 1200);
       if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
