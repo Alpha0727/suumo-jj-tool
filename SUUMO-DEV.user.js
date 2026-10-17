@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.0
+// @version      7.54.1
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.0";
+  const SCRIPT_VERSION = "7.54.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2266,6 +2266,13 @@
     GM_setValue(ADVANCED_TIMING_KEY, { stage, startedAt:now });
   }
 
+  // SUUMOの0件表示は「条件にあう物件がありません」等、複数表記に対応。
+  function isConfirmedNoResultMessage() {
+    if (document.readyState !== "complete") return false;
+    const message = document.body?.innerText || "";
+    return /条件に(?:あう|合う|一致する)物件がありません|条件にあう物件はありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?\\s*0\\s*件|該当物件(?:は)?\\s*0\\s*件/.test(message);
+  }
+
   // 全検索結果を順番に取得し、完了した物件だけを一覧へ載せる。
   let ieloveCollecting = false;
   async function collectIeloveSuumoResults() {
@@ -2289,8 +2296,7 @@
       while (Date.now() - started < 9000) {
         companies = getIeloveSearchCompanies();
         const cards = [...document.querySelectorAll(".property-body")];
-        const bodyText = !companies.length && document.readyState === "complete" ? (document.body?.innerText || "") : "";
-        const noResults = /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)|検索結果(?:は)?0件|該当物件(?:は)?0件/.test(bodyText);
+        const noResults = !companies.length && isConfirmedNoResultMessage();
         confirmedEmpty = document.readyState === "complete" && !companies.length &&
           (noResults || (cards.length > 0 && cards.every(card => !card.querySelector('a[href^="/chintai/kaisha/"]'))));
         if ((companies.length && document.readyState === "complete") || confirmedEmpty) break;
@@ -2300,7 +2306,8 @@
       await sleep(350);
       const current = getIeloveSearchCompanies();
       if (current.length) companies = current;
-      else if (!confirmedEmpty) {
+      else if (!confirmedEmpty || !(isConfirmedNoResultMessage() ||
+        [...document.querySelectorAll(".property-body")].some(card => !card.querySelector('a[href^="/chintai/kaisha/"]')))) {
         showIeloveCollectionError(index);
         return;
       }
