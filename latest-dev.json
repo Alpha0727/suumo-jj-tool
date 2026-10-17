@@ -1,5 +1,5 @@
 {
-  "version": "7.54.3",
+  "version": "7.54.4",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "丁目のない住所で番地が検索キーワードに残る問題を修正（千住宮元町12-11→千住宮元町）。丁目付き住所の抽出は従来どおり。"
+  "notes": "分析速いもん等でSUUMO検索を開いても会社選択画面を自動表示しない。上位版専用の一括取得タブのみ情報収集し、完了後は『一括で指摘に進む』またはSUUMO指摘設定内『一括処理』で選択画面を開く。"
 }
