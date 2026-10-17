@@ -1,5 +1,5 @@
 {
-  "version": "7.54.1",
+  "version": "7.54.2",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "SUUMOの『条件にあう物件がありません』を0件として認識し次の物件へ進む。掲載結果があるのに会社が取得できない場合は誤スキップせず停止。"
+  "notes": "SUUMO検索結果の会社リンクと掲載ID取得条件を拡張。結果が存在するのに会社・掲載URLを取得できない場合は0件として進めず、取得状況を表示して停止。"
 }
