@@ -1,5 +1,5 @@
 {
-  "version": "7.54.2",
+  "version": "7.54.3",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "SUUMO検索結果の会社リンクと掲載ID取得条件を拡張。結果が存在するのに会社・掲載URLを取得できない場合は0件として進めず、取得状況を表示して停止。"
+  "notes": "丁目のない住所で番地が検索キーワードに残る問題を修正（千住宮元町12-11→千住宮元町）。丁目付き住所の抽出は従来どおり。"
 }
