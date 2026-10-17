@@ -1,5 +1,5 @@
 {
-  "version": "7.54.0",
+  "version": "7.54.1",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "上位版の高速化：確認画面の固定待機をDOM検知に変更、検索結果の確認間隔短縮、検索・入力・送信工程の経過時間を記録。自動送信前1秒と安全確認は維持。"
+  "notes": "SUUMOの『条件にあう物件がありません』を0件として認識し次の物件へ進む。掲載結果があるのに会社が取得できない場合は誤スキップせず停止。"
 }
