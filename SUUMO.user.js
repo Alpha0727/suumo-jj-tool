@@ -2142,7 +2142,7 @@
       const firstIsCurrent=!params.has('pn') || params.get('pn')==='1';
       let pageDoc=firstIsCurrent ? document :
         new DOMParser().parseFromString(await getHtml(base.href),'text/html');
-      let pagesRead=0,previousFingerprint='',totalRead=0;
+      let pagesRead=0,previousFingerprint='',previousHadNext=false;
       const maxPages=80, matched=[];
       for(let pn=1;pn<=maxPages;pn++){
         if(stopped)return;
@@ -2153,7 +2153,10 @@
         }
         const cards=[...(pageDoc.querySelector('#js-bukkenList')?.querySelectorAll('.js-property')||[])];
         if(!cards.length && pn===1)throw Error('検索結果を取得できませんでした');
-        if(!cards.length)break;
+        if(!cards.length) {
+          if(previousHadNext)throw Error('次の検索ページを取得できませんでした');
+          break;
+        }
         const current=cards.map(readCard);
         const fingerprint=current.map(v=>v.id).filter(Boolean).join(',');
         const nextPageLink=[...pageDoc.querySelectorAll('a[href]')].some(a=>{
@@ -2163,12 +2166,12 @@
           }catch(_){return false;}
         });
         if(pn>1 && fingerprint===previousFingerprint){
-          if(nextPageLink)throw Error('ページ送りの応答が重複しました');
+          if(previousHadNext || nextPageLink)throw Error('ページ番号を変更しても結果が切り替わりません。全件取得できないため停止しました');
           break;
         }
         previousFingerprint=fingerprint;
+        previousHadNext=nextPageLink;
         pagesRead++;
-        totalRead+=current.length;
         for(const v of current){
           if(!v.id)continue;
           if(rows.has(v.id))continue;
