@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.51
-// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定・住戸条件照合（築年月）対応。
+// @version      7.52
+// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定・住戸5条件照合・複数ページ自動収集・会社一覧自動表示。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.51";
+  const SCRIPT_VERSION = "7.52";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -625,11 +625,21 @@
   // 検索一覧で有効化された住戸条件フィルターだけを、会社別一括申告にも適用する。
   let roomFilterSelection = null;
   let roomFilterAvailable = false;
-  let roomFilterActivateBasic = null;
+  let roomFilterScanState = 'idle';
+  let roomFilterMatchedListings = null;
 
   function getCompaniesFromSearchResults() {
     const cards = qsAll(".property-body");
     const companyMap = new Map();
+    if (Array.isArray(roomFilterMatchedListings)) {
+      for (const item of roomFilterMatchedListings) {
+        if (!companyMap.has(item.company)) companyMap.set(item.company, {company:item.company,items:[]});
+        const group=companyMap.get(item.company);
+        if (!group.items.some(listing => listing.propertyId===item.propertyId))
+          group.items.push({propertyId:item.propertyId,url:item.url});
+      }
+      return Array.from(companyMap.values());
+    }
 
     for (const card of cards) {
       const clip = card.querySelector('input[id="clipkey"]');
@@ -665,14 +675,12 @@
   }
 
   function openCompanySelection() {
-    // 検索条件が読み取れている場合、未絞り込みのまま一括申告しないよう確認する。
-    if (roomFilterAvailable && roomFilterSelection === null) {
-      const ok = confirm("住戸条件フィルターが未適用です。\n4条件一致の掲載だけを選択対象にしますか？\n\nOK：4条件を適用して会社選択へ\nキャンセル：処理を中止");
-      if (!ok) return;
-      roomFilterActivateBasic?.();
+    if (roomFilterAvailable && roomFilterScanState !== 'ready') {
+      toast('住戸の自動照合が完了するまで会社選択はできません。',5000);
+      return;
     }
-    if (roomFilterSelection && roomFilterSelection.size === 0) {
-      alert("現在の絞り込みでは対象掲載が0件です。\n住戸条件を確認してください。");
+    if (roomFilterAvailable && !roomFilterMatchedListings?.length) {
+      toast('現在の条件に一致する申告候補はありません。',5000);
       return;
     }
     document.getElementById("tm-company-dialog")?.remove();
@@ -1975,265 +1983,261 @@
     }
   });
 
-  // SUUMO Room Filter v0.3: 住所・階数・面積・賃料 ＋ クリック時に詳細から築年月照合
-  // 通常の検索結果ページだけで動く。既存の一括送信ルートは変更しない。
-  function initRoomFilter() {
-      'use strict';
-    
-      const PANEL_ID = 'suumo-room-filter-integrated-v751';
-      const HIDE_CLASS = 'suumo-room-filter-v751-hidden';
-      if (document.getElementById(PANEL_ID)) return;
-    
-      const norm = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
-      const cleaned = value => norm(value).replace(/\s+/g, '');
-      const fromURL = new URLSearchParams(location.search);
-      const fw = norm(fromURL.get('fw') || '');
-      const floorM = fw.match(/(\d+)\s*階/);
-      const areaM = fw.match(/(\d+(?:\.\d+)?)\s*(?:㎡|m(?:2)?)(?![A-Za-z0-9])/i);
-      const rentM = fw.match(/(\d+(?:\.\d+)?)\s*万円/);
-      const buildM = fw.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
-      const builtKey = (year, month) => `${Number(year)}-${String(Number(month)).padStart(2, '0')}`;
-      const target = {
-        address: buildM ? cleaned(fw.slice(0, buildM.index)) : '',
-        floor: floorM ? Number(floorM[1]) : null,
-        area: areaM ? Number(areaM[1]) : null,
-        rentYen: rentM ? Math.round(Number(rentM[1]) * 10000) : null,
-        built: buildM ? `${buildM[1]}年${Number(buildM[2])}月` : '',
-        builtKey: buildM ? builtKey(buildM[1], buildM[2]) : ''
+  // SUUMO住戸の全ページ・5条件一致スキャン。送信操作は一切行わない。
+  function startAutomaticRoomSearch() {
+    if (roomFilterScanState !== 'idle' || isBatchActive()) return;
+    const normalize = value => String(value == null ? '' : value).normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const compact = value => normalize(value).replace(/\s+/g, '');
+    const params = new URLSearchParams(location.search);
+    const fw = normalize(params.get('fw') || '');
+    const yearMonth = fw.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+    const floorMatch = fw.match(/(\d+)\s*階/);
+    const areaMatch = fw.match(/(\d+(?:\.\d+)?)\s*(?:㎡|m(?:2)?)(?![A-Za-z0-9])/i);
+    const rentMatch = fw.match(/(\d+(?:\.\d+)?)\s*万円/);
+    const target = {
+      address: yearMonth ? compact(fw.slice(0,yearMonth.index)) : '',
+      built: yearMonth ? Number(yearMonth[1]) + '-' + String(Number(yearMonth[2])).padStart(2,'0') : '',
+      floor: floorMatch ? Number(floorMatch[1]) : null,
+      area: areaMatch ? Number(areaMatch[1]) : null,
+      rentYen: rentMatch ? Math.round(Number(rentMatch[1])*10000) : null
+    };
+    if (!target.address || !target.built || Number(yearMonth[2])<1 || Number(yearMonth[2])>12 ||
+        target.floor === null || target.area === null || target.rentYen === null) return;
+
+    roomFilterAvailable = true;
+    roomFilterScanState = 'scanning';
+    roomFilterMatchedListings = null;
+    roomFilterSelection = null;
+
+    let stopped = false;
+    let activeController = null;
+    let currentRecords = [];
+    const hideClass = 'tm-room-auto-hidden';
+    if (!document.getElementById('tm-room-auto-style')) {
+      const style = document.createElement('style');
+      style.id = 'tm-room-auto-style';
+      style.textContent = '.' + hideClass + '{display:none!important}';
+      document.head.appendChild(style);
+    }
+    document.getElementById('tm-room-auto-progress')?.remove();
+    const panel = document.createElement('div');
+    panel.id='tm-room-auto-progress';
+    Object.assign(panel.style,{
+      position:'fixed',right:'14px',bottom:'16px',zIndex:'2147483646',
+      width:'350px',maxWidth:'calc(100vw - 35px)',boxSizing:'border-box',
+      padding:'12px 14px',background:'#fff',border:'2px solid #167755',
+      borderRadius:'12px',boxShadow:'0 5px 20px #0003',
+      font:'13px/1.5 system-ui,Meiryo,sans-serif',color:'#22313b'
+    });
+    const heading=document.createElement('div');
+    heading.style.cssText='font-size:15px;font-weight:700';
+    heading.textContent='SUUMO 住戸を自動照合中';
+    const detail=document.createElement('div');
+    detail.style.cssText='white-space:pre-line;margin:7px 0';
+    detail.textContent='検索ページを確認しています…';
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;justify-content:flex-end';
+    const stopButton=document.createElement('button');
+    stopButton.textContent='中止';
+    stopButton.style.cssText='padding:7px 12px;border:1px solid #ccd4da;background:#fff;border-radius:7px;cursor:pointer';
+    const retryButton=document.createElement('button');
+    retryButton.textContent='再検索';
+    retryButton.style.cssText='display:none;padding:7px 12px;border:0;background:#167755;color:#fff;border-radius:7px;cursor:pointer';
+    row.append(retryButton,stopButton);
+    panel.append(heading,detail,row);
+    document.body.append(panel);
+    stopButton.onclick=()=> {
+      stopped=true;
+      activeController?.abort();
+      roomFilterScanState='cancelled';
+      roomFilterMatchedListings=null;
+      roomFilterSelection=null;
+      for(const element of document.querySelectorAll('.'+hideClass)) element.classList.remove(hideClass);
+      heading.textContent='自動照合を中止しました';
+      detail.textContent='結果は一括申告に引き渡していません。';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+    };
+    retryButton.onclick=()=> {
+      for(const element of document.querySelectorAll('.'+hideClass)) element.classList.remove(hideClass);
+      panel.remove();
+      roomFilterScanState='idle';
+      roomFilterAvailable=false;
+      startAutomaticRoomSearch();
+    };
+
+    const readCard=card=>{
+      const title=normalize(card.querySelector('.property_inner-title')?.textContent);
+      const floor=title.match(/(\d+)\s*階/);
+      const rent=normalize(card.querySelector('.detailbox-property-point')?.textContent).match(/([\d.]+)\s*万円/);
+      const cells=[...card.querySelectorAll('.detailbox-property tr > td')];
+      const area=normalize(cells[2]?.textContent).match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
+      const id=card.querySelector('input[name="bc"]')?.value || card.querySelector('input[id="clipkey"]')?.value || '';
+      const company=normalize(card.querySelector('a[href^="/chintai/kaisha/"]')?.textContent);
+      const href=card.querySelector('.property_inner-title a[href^="/chintai/"]')?.getAttribute('href') || '';
+      return {
+        id,company,href,card,
+        address:compact(cells[4]?.textContent),
+        floor:floor ? Number(floor[1]) : null,
+        rentYen:rent ? Math.round(Number(rent[1])*10000) : null,
+        area:area ? Number(area[1]) : null
       };
-      const validTarget = Boolean(target.address && target.floor !== null && target.area !== null && target.rentYen !== null);
-      const validBuilt = Boolean(buildM && Number(buildM[2]) >= 1 && Number(buildM[2]) <= 12);
-    
-      function readCard(card) {
-        const title = norm(card.querySelector('.property_inner-title')?.textContent);
-        const floor = title.match(/(\d+)\s*階/);
-        const rentTxt = norm(card.querySelector('.detailbox-property-point')?.textContent);
-        const rent = rentTxt.match(/([\d.]+)\s*万円/);
-        const cells = [...card.querySelectorAll('.detailbox-property tr > td')];
-        const areaTxt = norm(cells[2]?.textContent);
-        const area = areaTxt.match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
-        const id = card.querySelector('input[name="bc"]')?.value || '';
-        const detailHref = card.querySelector('.property_inner-title a[href^="/chintai/"]')?.getAttribute('href') || '';
-        return {
-          id, title,
-          floor: floor ? Number(floor[1]) : null,
-          area: area ? Number(area[1]) : null,
-          rentYen: rent ? Math.round(Number(rent[1]) * 10000) : null,
-          address: cleaned(cells[4]?.textContent),
-          detailHref,
-          raw: {rent: rentTxt, area: areaTxt, address: norm(cells[4]?.textContent), cells: cells.length}
-        };
+    };
+    const readBuilt=html=>{
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const ym=/([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/;
+      for(const cell of doc.querySelectorAll('th,dt')){
+        if(compact(cell.textContent)!=='築年月')continue;
+        const candidates=[cell.nextElementSibling?.textContent,cell.parentElement?.textContent];
+        for(const candidate of candidates){
+          const found=normalize(candidate).match(ym);
+          if(found)return Number(found[1])+'-'+String(Number(found[2])).padStart(2,'0');
+        }
       }
-    
-      // DOMParserで作った文書は未表示なので、innerTextではなくtextContentを使う。
-      // 「築11年」のような相対表現を築年月に変換してはいけない。
-      function readBuiltFromDetail(html) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const ym = /([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/;
-        const candidates = [];
-        for (const cell of doc.querySelectorAll('th,dt')) {
-          if (cleaned(cell.textContent) !== '築年月') continue;
-          const next = cell.nextElementSibling;
-          if (next) candidates.push(next.textContent);
-          // tableで label と value が別要素内にあるケースにも備える。
-          if (cell.parentElement) candidates.push(cell.parentElement.textContent);
-        }
-        for (const candidate of candidates) {
-          const match = norm(candidate).match(ym);
-          if (match) return {key: builtKey(match[1], match[2]), text: `${match[1]}年${Number(match[2])}月`, source: 'label'};
-        }
-        const bodyText = norm(doc.body?.textContent);
-        const match = bodyText.match(/築年月\s*[:：]?\s*([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/);
-        if (match) return {key: builtKey(match[1], match[2]), text: `${match[1]}年${Number(match[2])}月`, source: 'text'};
-        return null;
+      const found=normalize(doc.body?.textContent).match(/築年月\s*[:：]?\s*([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/);
+      return found ? Number(found[1])+'-'+String(Number(found[2])).padStart(2,'0') : null;
+    };
+    const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    async function getHtml(url) {
+      if(stopped)throw Error('中止');
+      const u=new URL(url,location.href);
+      if(u.origin!==location.origin || !u.pathname.startsWith('/jj/chintai/ichiran/') && !u.pathname.startsWith('/chintai/'))
+        throw Error('SUUMO以外のURLを検出しました');
+      const controller=new AbortController();
+      activeController=controller;
+      const timer=setTimeout(()=>controller.abort(),12000);
+      try{
+        const response=await fetch(u.href,{credentials:'same-origin',signal:controller.signal});
+        if(!response.ok)throw Error('ページ取得失敗 HTTP '+response.status);
+        const type=response.headers.get('content-type') || '';
+        if(type && !type.includes('html'))throw Error('HTML以外の応答');
+        const html=await response.text();
+        if(html.length<1000)throw Error('ページ内容が不完全です');
+        return html;
+      }finally{
+        clearTimeout(timer);
+        if(activeController===controller)activeController=null;
       }
-    
-      function start() {
-        if (document.getElementById(PANEL_ID)) return;
-        const list = document.querySelector('#js-bukkenList');
-        const cards = [...(list?.querySelectorAll('.js-property') || [])];
-        if (!cards.length) return;
-    
-        const records = cards.map(card => {
-          const v = readCard(card);
-          const checks = {
-            address: v.address === target.address,
-            floor: v.floor === target.floor,
-            area: v.area === target.area,
-            rent: v.rentYen === target.rentYen
-          };
-          return {
-            card, v, checks,
-            basicMatch: validTarget && Object.values(checks).every(Boolean),
-            builtStatus: '未照合', builtText: '', builtReason: ''
-          };
-        });
-        const basic = records.filter(r => r.basicMatch);
-        const stat = name => records.filter(r => r.checks[name]).length;
-        let mode = 'all';
-        roomFilterAvailable = validTarget;
-        roomFilterActivateBasic = () => { mode = 'basic'; render(); };
-        let checking = false;
-        let scanFinished = false;
-        let checked = 0;
-    
-        const style = document.createElement('style');
-        style.textContent = `.${HIDE_CLASS}{display:none!important}
-          #${PANEL_ID}{position:fixed;right:14px;bottom:16px;z-index:2147483647;background:#fff;
-          color:#1c2630;border:2px solid #208a64;border-radius:12px;box-shadow:0 5px 22px #0003;
-          padding:12px 14px;width:365px;max-width:calc(100vw - 40px);font:13px/1.5 system-ui,Meiryo,sans-serif}
-          #${PANEL_ID} .srf-btn{border:0;border-radius:7px;padding:7px 10px;background:#167755;
-          color:white;font:inherit;cursor:pointer}
-          #${PANEL_ID} .srf-alt{background:#556470}
-          #${PANEL_ID} .srf-btn:disabled{opacity:.45;cursor:not-allowed}
-          #${PANEL_ID} .srf-note{font-size:11px;color:#5e666a;margin-top:7px;overflow-wrap:anywhere}
-          #${PANEL_ID} .srf-stats{background:#f2f6f3;border-radius:6px;padding:7px;margin-top:8px;font-size:12px;line-height:1.6}`;
-        document.head.append(style);
-    
-        const panel = document.createElement('section');
-        panel.id = PANEL_ID;
-        const heading = document.createElement('div');
-        heading.style.cssText = 'font-weight:700;font-size:15px;margin-bottom:4px';
-        const subtitle = document.createElement('div');
-        subtitle.textContent = `${target.floor ?? '?'}階 / ${target.area ?? '?'}㎡ / ${target.rentYen !== null ? target.rentYen / 10000 : '?'}万円 / ${target.built || '築年月不明'}`;
-        const stats = document.createElement('div');
-        stats.className = 'srf-stats';
-        const progress = document.createElement('div');
-        progress.className = 'srf-note';
-        const btnRow = document.createElement('div');
-        btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:7px;margin-top:9px';
-        const button = (label, alt=false) => {
-          const b=document.createElement('button');
-          b.type='button'; b.className='srf-btn'+(alt?' srf-alt':'');
-          b.textContent=label; return b;
-        };
-        const fourBtn = button('4条件一致のみ');
-        const dateBtn = button('築年月も照合');
-        const strictBtn = button('築年月一致のみ');
-        const unknownBtn = button('築年月未確認');
-        const allBtn = button('全件に戻す', true);
-        const copyBtn = button('診断結果をコピー', true);
-        const note = document.createElement('div');
-        note.className = 'srf-note';
-        note.textContent = '築年月は候補の詳細ページから照合。取得できない物件は未確認扱いにします。号室は判定せず、指摘・送信もしません。';
-    
-        function statusCounts() {
-          return {
-            matched: basic.filter(r => r.builtStatus === '一致').length,
-            mismatched: basic.filter(r => r.builtStatus === '不一致').length,
-            unknown: basic.filter(r => r.builtStatus === '取得不可').length,
-            unprocessed: basic.filter(r => r.builtStatus === '未照合').length
-          };
-        }
-    
-        function visible(row) {
-          if (mode === 'all') return true;
-          if (mode === 'basic') return row.basicMatch;
-          if (mode === 'strict') return row.basicMatch && row.builtStatus === '一致';
-          if (mode === 'unknown') return row.basicMatch && row.builtStatus === '取得不可';
-          return true;
-        }
-    
-        function render() {
-          roomFilterSelection = mode === 'all' ? null : new Set(records.filter(visible).map(r => r.v.id));
-          records.forEach(r => r.card.classList.toggle(HIDE_CLASS, !visible(r)));
-          list.querySelectorAll('.property_group').forEach(group => {
-            const groupCards = [...group.querySelectorAll('.js-property')];
-            group.classList.toggle(HIDE_CLASS, !groupCards.some(c => !c.classList.contains(HIDE_CLASS)));
-          });
-          list.querySelectorAll('.summarize').forEach(el => el.classList.toggle(HIDE_CLASS, mode !== 'all'));
-          const sc = statusCounts();
-          const modes = {all:'全件表示中',basic:'4条件一致を表示中',strict:'築年月一致を表示中',unknown:'取得不可を表示中'};
-          heading.textContent = `${modes[mode]}：${records.filter(visible).length}件（HTML内${records.length}件）`;
-          stats.textContent = `4条件一致：${basic.length}件｜住所${stat('address')}・階数${stat('floor')}・面積${stat('area')}・賃料${stat('rent')} 件\n築年月：一致 ${sc.matched}件 / 不一致 ${sc.mismatched}件 / 取得不可 ${sc.unknown}件 / 未照合 ${sc.unprocessed}件`;
-          stats.style.whiteSpace='pre-line';
-          progress.textContent = checking ? `築年月を確認中：${checked} / ${basic.length}件（低速・順番にアクセス）` : scanFinished ? '築年月の照合が完了しました。取得不可は要手動確認。' : '築年月はまだ照合していません。';
-          dateBtn.disabled = checking || scanFinished || !validTarget || !validBuilt || !basic.length;
-          strictBtn.disabled = !scanFinished;
-          unknownBtn.disabled = !scanFinished || !sc.unknown;
-          fourBtn.disabled = !validTarget;
-        }
-    
-        // ユーザーがボタンを押した時だけ詳細を確認。表示ページの同一オリジンURLに限定。
-        async function checkBuilt(row) {
-          const href = row.v.detailHref;
-          if (!href || !row.v.id) return {status:'取得不可', reason:'詳細URL/物件IDがありません'};
-          let url;
-          try { url = new URL(href, location.origin); }
-          catch {return {status:'取得不可',reason:'詳細URLが不正です'};}
-          if (url.origin !== location.origin || !url.pathname.startsWith('/chintai/')) {
-            return {status:'取得不可',reason:'同一オリジンのSUUMO物件詳細ではありません'};
-          }
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 12000);
-          try {
-            const response = await fetch(url.href, {credentials:'same-origin', signal:controller.signal});
-            if (!response.ok) return {status:'取得不可',reason:`HTTP ${response.status}`};
-            const type = response.headers.get('content-type') || '';
-            if (type && !type.includes('text/html')) return {status:'取得不可',reason:'HTML以外の応答'};
-            const html = await response.text();
-            const documentIdFound = html.includes(row.v.id);
-            if (!documentIdFound) return {status:'取得不可',reason:'物件IDが詳細ページ内で確認できません'};
-            const built = readBuiltFromDetail(html);
-            if (!built) return {status:'取得不可',reason:'詳細ページから築年月を抽出できません'};
-            return {
-              status: built.key === target.builtKey ? '一致' : '不一致',
-              builtText: built.text,
-              reason: `取得元:${built.source}`
-            };
-          } catch (error) {
-            return {status:'取得不可', reason: error?.name === 'AbortError' ? '12秒でタイムアウト' : String(error?.message || error)};
-          } finally {clearTimeout(timer);}
-        }
-    
-        fourBtn.addEventListener('click', () => { mode='basic'; render(); });
-        strictBtn.addEventListener('click', () => { if (scanFinished) {mode='strict';render();} });
-        unknownBtn.addEventListener('click', () => { if (scanFinished) {mode='unknown';render();} });
-        allBtn.addEventListener('click', () => { mode='all';render(); });
-        dateBtn.addEventListener('click', async () => {
-          if (checking || scanFinished || !validTarget || !validBuilt) return;
-          checking=true; checked=0; mode='basic'; render();
-          // 連続アクセスを避けるため逐次確認。エラー時は未確認として扱い、誤って一致にしない。
-          for (const row of basic) {
-            const result = await checkBuilt(row);
-            row.builtStatus = result.status;
-            row.builtText = result.builtText || '';
-            row.builtReason = result.reason || '';
-            checked++;
-            render();
-            if (checked < basic.length) await new Promise(resolve => setTimeout(resolve, 400));
-          }
-          checking=false; scanFinished=true; render();
-        });
-        copyBtn.addEventListener('click', async () => {
-          const sc=statusCounts();
-          const report = {
-            version:'0.3.0', page:location.pathname,
-            hasIimonParameter:fromURL.has('iimon'),keyword:fw,target,validTarget,validBuilt,
-            counts:{all:records.length, basic:basic.length, floor:stat('floor'),
-              area:stat('area'),rent:stat('rent'),address:stat('address'),built:sc},
-            results:basic.map(r => ({id:r.v.id,title:r.v.title,detail:r.v.detailHref,
-              builtStatus:r.builtStatus,built:r.builtText,reason:r.builtReason}))
-          };
-          const data=JSON.stringify(report,null,2);
-          try {await navigator.clipboard.writeText(data);copyBtn.textContent='コピーしました';}
-          catch {
-            const ta=document.createElement('textarea');ta.value=data;
-            ta.style.cssText='position:fixed;top:5px;left:5px;z-index:2147483647';
-            document.body.append(ta);ta.select();
-            try {document.execCommand('copy');copyBtn.textContent='コピーしました';}
-            catch {copyBtn.textContent='コピー失敗';}
-            ta.remove();
-          }
-        });
-        btnRow.append(fourBtn,dateBtn,strictBtn,unknownBtn,allBtn,copyBtn);
-        panel.append(heading,subtitle,stats,progress,btnRow,note);
-        document.body.append(panel);
-        render();
+    }
+    function showMatchedOnCurrentPage(ids) {
+      const list=document.querySelector('#js-bukkenList');
+      if(!list)return;
+      for(const card of list.querySelectorAll('.js-property')){
+        const id=card.querySelector('input[name="bc"]')?.value;
+        card.classList.toggle(hideClass,!ids.has(id));
       }
-    
-      start();
-      if (!document.getElementById(PANEL_ID)) setTimeout(start, 1500);
+      for(const group of list.querySelectorAll('.property_group')){
+        group.classList.toggle(hideClass,![...group.querySelectorAll('.js-property')].some(c=>!c.classList.contains(hideClass)));
+      }
+      for(const summary of list.querySelectorAll('.summarize'))summary.classList.add(hideClass);
+    }
+
+    (async()=>{
+      const rows=new Map();
+      const base=new URL(location.href);
+      base.searchParams.delete('iimon');
+      base.searchParams.delete('utm_source');
+      base.searchParams.set('pn','1');
+      const pageSize=Math.max(1,Number(params.get('pc')) || 30);
+      const firstIsCurrent=!params.has('pn') || params.get('pn')==='1';
+      let pageDoc=firstIsCurrent ? document :
+        new DOMParser().parseFromString(await getHtml(base.href),'text/html');
+      let pagesRead=0,previousFingerprint='',totalRead=0;
+      const maxPages=80, matched=[];
+      for(let pn=1;pn<=maxPages;pn++){
+        if(stopped)return;
+        if(pn>1){
+          const url=new URL(base.href);
+          url.searchParams.set('pn',String(pn));
+          pageDoc=new DOMParser().parseFromString(await getHtml(url.href),'text/html');
+        }
+        const cards=[...(pageDoc.querySelector('#js-bukkenList')?.querySelectorAll('.js-property')||[])];
+        if(!cards.length && pn===1)throw Error('検索結果を取得できませんでした');
+        if(!cards.length)break;
+        const current=cards.map(readCard);
+        const fingerprint=current.map(v=>v.id).filter(Boolean).join(',');
+        const nextPageLink=[...pageDoc.querySelectorAll('a[href]')].some(a=>{
+          try{const u=new URL(a.getAttribute('href'),base.href);
+            return u.origin===base.origin && u.pathname===base.pathname &&
+              Number(u.searchParams.get('pn'))===pn+1;
+          }catch(_){return false;}
+        });
+        if(pn>1 && fingerprint===previousFingerprint){
+          if(nextPageLink)throw Error('ページ送りの応答が重複しました');
+          break;
+        }
+        previousFingerprint=fingerprint;
+        pagesRead++;
+        totalRead+=current.length;
+        for(const v of current){
+          if(!v.id)continue;
+          if(rows.has(v.id))continue;
+          rows.set(v.id,v);
+        }
+        detail.textContent='検索ページ：'+pagesRead+'ページ / 調査済み '+rows.size+'件\n4条件の一致候補を抽出中';
+        // 次ページのリンクが無く、1ページの掲載数が満たない場合は最終ページと判定。
+        if(!nextPageLink && cards.length<pageSize)break;
+        // 件数がページサイズと同じ場合は次ページの有無を問い合わせる。
+        if(pn===maxPages)throw Error('検索結果が80ページを超えました。全件確認できないため処理を停止しました');
+        await wait(240);
+      }
+      for(const v of rows.values()){
+        if(v.address===target.address && v.floor===target.floor &&
+           v.rentYen===target.rentYen && v.area===target.area) matched.push(v);
+      }
+      detail.textContent='検索ページ：'+pagesRead+'ページ / 全'+rows.size+'掲載\n4条件一致：'+matched.length+'件\n築年月を確認しています…';
+      let verified=0,unknown=0,mismatched=0;
+      const confirmed=[];
+      for(const candidate of matched){
+        if(stopped)return;
+        let reason='';
+        if(!candidate.href || !candidate.id){reason='URLまたはID不明';}
+        else{
+          try{
+            const detailUrl=new URL(candidate.href,location.origin);
+            if(detailUrl.origin!==location.origin || !/^\/chintai\/(?:bc_|jnc_)/.test(detailUrl.pathname))throw Error('詳細URLが不正です');
+            const html=await getHtml(detailUrl.href);
+            if(!html.includes(candidate.id))throw Error('詳細ページの物件IDが一致しません');
+            const built=readBuilt(html);
+            if(built===null)reason='築年月を取得できません';
+            else if(built===target.built){
+              if(candidate.company)confirmed.push({propertyId:candidate.id,company:candidate.company,
+                url:'https://suumo.jp/chintai/bc_'+candidate.id+'/'});
+              else reason='取り扱い会社が不明です';
+            }else mismatched++;
+          }catch(err){if(stopped)return;reason=String(err?.message||err);}
+        }
+        if(reason)unknown++;
+        verified++;
+        detail.textContent='検索ページ：'+pagesRead+'ページ / 全'+rows.size+'掲載\n4条件一致：'+matched.length+'件\n築年月照合：'+verified+'/'+matched.length+'件';
+        if(verified<matched.length)await wait(320);
+      }
+      if(stopped)return;
+      roomFilterMatchedListings=confirmed;
+      roomFilterSelection=new Set(confirmed.map(v=>v.propertyId));
+      roomFilterScanState='ready';
+      showMatchedOnCurrentPage(roomFilterSelection);
+      heading.textContent='住戸の照合が完了しました';
+      detail.textContent='確認ページ：'+pagesRead+' / 掲載：'+rows.size+'件\n5条件一致：'+confirmed.length+'件\n築年月不一致：'+mismatched+'件 / 未確認：'+unknown+'件';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+      if(unknown)detail.textContent+='\n※未確認物件は安全のため自動選択していません。';
+      if(confirmed.length)openCompanySelection();
+      else{
+        heading.textContent='一致物件が見つかりませんでした';
+        detail.textContent+='\n条件を確認するか、再検索してください。';
+      }
+    })().catch(error=>{
+      if(stopped)return;
+      roomFilterMatchedListings=null;
+      roomFilterSelection=null;
+      roomFilterScanState='failed';
+      heading.textContent='自動照合を完了できませんでした';
+      detail.textContent=String(error?.message||error)+'\n途中までの結果は一括申告に利用していません。';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+      for(const element of document.querySelectorAll('.'+hideClass))element.classList.remove(hideClass);
+    });
   }
 
   async function init() {
@@ -2251,10 +2255,13 @@
 
     if (location.hostname !== "suumo.jp") return;
 
-    if (/^\/jj\/chintai\/ichiran\//.test(location.pathname)) initRoomFilter();
+
     addMainButtons();
     if (!requireProfileManager()) return;
 
+    if (/^\/jj\/chintai\/ichiran\//.test(location.pathname) && !isBatchActive()) {
+      startAutomaticRoomSearch();
+    }
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
     updateBatchPanel();
