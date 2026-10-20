@@ -1,0 +1,5 @@
+{
+  "version": "7.50",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.50.user.js",
+  "notes": "SUUMO側の『指摘設定』ボタンの文字を上下左右中央揃えに修正。サイズ・配置・機能は変更なし。"
+}
