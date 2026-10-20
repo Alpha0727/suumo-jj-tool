@@ -1,33 +1,34 @@
-# SUUMO JJ / いえらぶSPOT 管理
+# SUUMO JJ 一括申告ツール
 
-## 配布先
+このリポジトリは SUUMO JJ の一般版と上位版を管理します。
 
-| 用途 | ファイル | バージョン | 更新方針 |
+## 配布と更新
+
+| 種類 | 管理場所 | バージョン | 方針 |
 | --- | --- | --- | --- |
-| SUUMO JJ 一般版 | [SUUMO.user.js](SUUMO.user.js) | 8.0 | 原則凍結・明示的な許可なしに更新しない |
-| SUUMO JJ 上位版 | [dev ブランチ](../../tree/dev) の `SUUMO-DEV.user.js` | 7.54.5 | 上位版のみ開発・更新 |
-| いえらぶSPOT | [ierabu-spot/](ierabu-spot/) | 1.0 | 独立したツールとして管理 |
+| 一般版 | [main / SUUMO.user.js](SUUMO.user.js) | **8.0** | **凍結**。明示的な依頼がない限り変更しない |
+| 上位版 | [dev / SUUMO-DEV.user.js](https://github.com/Alpha0727/suumo-jj-tool/blob/dev/SUUMO-DEV.user.js) | **7.54.5** | こちらで機能の追加・改善を行う |
 
-一般版の自動更新定義は `latest.json`、上位版は dev ブランチの `latest-dev.json` を使用します。
+一般版の自動更新情報は `main/latest.json`、上位版は `dev/latest-dev.json` を使います。
+両者は Tampermonkey の識別情報も異なります。
 
-## バージョン保持
+## 配布済みバージョン
 
-一般版は `releases/` に最新版 8.0 と直前2版（7.50、7.49）のみを保存しています。
-上位版は dev ブランチの `releases/` に 7.54.5 と 7.54.4 を保存しています。
-削除済みの過去版は Git の履歴から確認可能です。
+- 一般版の `releases/`：8.0 / 7.50 / 7.49（最新版と過去2版）
+- 上位版の `dev/releases/`：7.54.5 / 7.54.4（最新版と現存する過去版）
+- それ以前のファイルは Git の履歴から確認可能です
 
-## いえらぶSPOT の互換性
+## バックアップ
 
-いえらぶSPOTの配布版は `ierabu-spot/releases/` に整理しました。
-既にインストール済みのスクリプトが更新を継続できるよう、
-`IERABU-SPOT.user.js` と `latest-spot.json` はルートにも互換入口として残しています。
-完全に別のGitHubリポジトリに分離する場合は、新リポジトリ作成と更新URL移行が必要です。
+- 一般版7.50の更新前バックアップ：`main/backups/2026-10-20/`
+- 上位版7.54.4の更新前バックアップ：`dev/backups/2026-10-20/`
 
-## 復元用バックアップ
+## いえらぶSPOT は別管理
 
-一般版 7.50（Ver.8.0への変更前）のバックアップは `backups/2026-10-20/`、上位版 7.54.4 のバックアップは dev ブランチの同フォルダに保管しています。
+**いえらぶSPOTは独立したリポジトリ** [Alpha0727/IERABU-SPOT](https://github.com/Alpha0727/IERABU-SPOT) で管理しています（Ver.2.4）。
+このSUUMO-JJリポジトリには、いえらぶSPOTの配布スクリプトや更新設定を保管しません。
 
-## ブランチ保護
+## 一般版の保護
 
-一般版は今後 main ブランチの Lock branch 設定で変更を制限する予定です。
-この文書の記述自体は GitHub の書き込み保護ではありません。
+一般版8.0は今後変更しない方針です。誤更新防止のため `main` ブランチを GitHub の **Lock branch** で保護する予定です。
+この方針の記述だけでは書き込みを物理的に禁止できないため、GitHub側で保護設定が必要です。
