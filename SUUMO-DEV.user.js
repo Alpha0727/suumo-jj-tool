@@ -2371,7 +2371,10 @@
     const cells=[...card.querySelectorAll(".detailbox-property tr > td")];
     const area=norm(cells[2]?.textContent).match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
     const companyLink=card.querySelector('a[href*="/chintai/kaisha/"]');
-    const name=norm(companyLink?.textContent || companyLink?.getAttribute("title"));
+    // SUUMOでは会社リンクが無く、店舗名が文字だけのカードもある。
+    const plainCompany=[...card.querySelectorAll(".detailnote-box-item")].map(item=>
+      item.querySelector("div:not(.ui-text--bold)")?.textContent).map(norm).find(Boolean) || "";
+    const name=norm(companyLink?.textContent || companyLink?.getAttribute("title") || plainCompany);
     const companyHref=companyLink?.getAttribute("href") || "";
     const companyKey=companyHref.replace(/^https?:\/\/[^/]+/i,"").replace(/[?#].*$/,"").replace(/\/$/,"") || ("name:"+name);
     const ids=[
