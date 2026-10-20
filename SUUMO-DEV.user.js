@@ -2414,7 +2414,7 @@
     if(base.origin!==location.origin || !base.pathname.startsWith("/jj/chintai/ichiran/")) throw new Error("検索URLが不正です");
     const current=new URL(location.href);
     const baseParams=new URLSearchParams(base.search);
-    const perPage=Math.max(1,Number(baseParams.get("pc"))||30);
+    const perPage=Math.min(100,Math.max(1,Number(baseParams.get("pc"))||30));
     const maxPages=80;
     const all=new Map();
     let previousIds="", previousHasNext=false, pageCount=0, pagesFinished=false;
@@ -2514,7 +2514,7 @@
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
     if (new URL(location.href).searchParams.get("fw") !== new URL(handoff.searches[index].url).searchParams.get("fw")) return;
     const selections = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
-    if (Array.isArray(selections[index]?.__companies)) {
+    if (Array.isArray(selections[index]?.__companies) && selections[index].__verifiedFiveConditions === true) {
       if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
       return;
@@ -2740,7 +2740,7 @@
     const missingProfiles = [];
     for (let i = 0; i < handoff.records.length; i++) {
       const selection = saved[i];
-      if (!selection || !Array.isArray(selection.__companies)) {
+      if (!selection || !Array.isArray(selection.__companies) || selection.__verifiedFiveConditions !== true) {
         incomplete.push(i + 1);
         continue;
       }
