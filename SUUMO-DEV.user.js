@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.5
+// @version      7.54.6
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.5";
+  const SCRIPT_VERSION = "7.54.6";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2371,34 +2371,36 @@
     const cells=[...card.querySelectorAll(".detailbox-property tr > td")];
     const area=norm(cells[2]?.textContent).match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
     const companyLink=card.querySelector('a[href*="/chintai/kaisha/"]');
-    // SUUMOでは会社リンクが無く、店舗名が文字だけのカードもある。
-    const plainCompany=[...card.querySelectorAll(".detailnote-box-item")].map(item=>
-      item.querySelector("div:not(.ui-text--bold)")?.textContent).map(norm).find(Boolean) || "";
-    const name=norm(companyLink?.textContent || companyLink?.getAttribute("title") || plainCompany);
+    const note=card.querySelector(".detailnote-box-item");
+    const plainCompany=note ? [...note.querySelectorAll("div")].filter(div=>
+      !div.closest(".ui-text--bold") && !div.classList.contains("ui-text--bold")
+    ).map(div=>norm(div.textContent)).find(text=>
+      text && !/お電話の際|SUUMOを見た|0120[\s-]*\d+|^\d{2,5}[-\s]\d+/.test(text)
+    ) || "" : "";
+    const companyName=norm(companyLink?.textContent || companyLink?.getAttribute("title") || plainCompany);
     const companyHref=companyLink?.getAttribute("href") || "";
-    const companyKey=companyHref.replace(/^https?:\/\/[^/]+/i,"").replace(/[?#].*$/,"").replace(/\/$/,"") || ("name:"+name);
-    const ids=[
-      card.querySelector('input[name="bc"]')?.value,
-      card.querySelector('input[id="clipkey"],input[name="clipkey"]')?.value,
-      ...[...card.querySelectorAll('a[href*="/chintai/bc_"],a.js-singleShiryoSeikyu[rel]')].map(a=>a.getAttribute("href") || a.getAttribute("rel") || "")
-    ];
-    const candidates=new Set();
-    for(const raw of ids){
-      const t=String(raw || "").trim();
-      const m=t.match(/\/chintai\/bc_(\d+)\/?/i) || t.match(/(?:^|_)(\d{8,})$/);
-      if(m)candidates.add(m[1]);
-      else if(/^\d{8,}$/.test(t))candidates.add(t);
-    }
-    const titleHref=card.querySelector('.property_inner-title a[href^="/chintai/"]')?.getAttribute("href") || "";
-    const id=candidates.size===1 ? [...candidates][0] : "";
+    const companyKey=companyHref.replace(/^https?:\/\/[^/]+/i,"").replace(/[?#].*$/,"").replace(/\/$/,"") || (companyName ? "name:"+companyName : "");
+    // 掲載IDは物件カード固有のチェック欄または物件名リンクから確定する。
+    // ページ内の関連物件など別のURLはID不一致の判定に混ぜない。
+    const fromHref = href => (String(href || "").match(/\/chintai\/bc_(\d+)\/?/i) || [])[1] || "";
+    const checkedId=norm(card.querySelector('input[name="bc"]')?.value);
+    const clipId=norm(card.querySelector('input[id="clipkey"],input[name="clipkey"]')?.value);
+    const titleAnchor=card.querySelector('.property_inner-title a[href*="/chintai/bc_"]');
+    const titleId=fromHref(titleAnchor?.getAttribute("href"));
+    let id=checkedId || titleId || clipId;
+    const verified=[checkedId,titleId,clipId].filter(v=>/^\d{8,}$/.test(v));
+    const idAmbiguous=verified.some(v=>v!==id) || (id && !/^\d{8,}$/.test(id));
+    if(!/^\d{8,}$/.test(id))id="";
+    const titleHref=id ? "/chintai/bc_"+id+"/" : "";
     return {
-      id, idAmbiguous:candidates.size>1, titleHref, companyKey, companyName:name,
+      id, idAmbiguous, titleHref, companyKey, companyName,
       address:compact(cells[4]?.textContent),
       floor:floor ? Number(floor[1]) : null,
       area:area ? Number(area[1]) : null,
       rentYen:rent ? Math.round(Number(rent[1])*10000) : null
     };
   }
+
 
   function showIeloveRoomScanProgress(message) {
     let el=document.getElementById("tm-ielove-room-scan-progress");
@@ -2469,7 +2471,16 @@
       previousHasNext=nextLink;
       for(const row of currentRows){
         if(row.address!==target.address||row.floor!==target.floor||row.area!==target.area||row.rentYen!==target.rentYen)continue;
-        if(!row.id||row.idAmbiguous||!row.companyName||!row.companyKey||!row.titleHref)throw new Error("候補物件のID・会社・詳細URLを確認できません");
+        if(!row.id||row.idAmbiguous||!row.companyName||!row.companyKey||!row.titleHref){
+          const missing=[
+            !row.id&&"物件ID",
+            row.idAmbiguous&&"物件IDの不一致",
+            !row.companyName&&"会社名",
+            !row.companyKey&&"会社識別子",
+            !row.titleHref&&"物件詳細URL"
+          ].filter(Boolean);
+          throw new Error("物件ID "+(row.id||"不明")+"："+missing.join("・")+"を取得できません（検索"+page+"ページ目）。");
+        }
         if(all.has(row.id)){
           const existing=all.get(row.id);
           if(existing.companyKey!==row.companyKey)throw new Error("同じ掲載IDに異なる会社が見つかりました");
