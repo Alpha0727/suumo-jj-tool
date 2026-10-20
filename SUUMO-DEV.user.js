@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.6
+// @version      7.54.7
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.6";
+  const SCRIPT_VERSION = "7.54.7";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2242,7 +2242,7 @@
     if (!isAuthorizedIeloveBatchSearch() || isBatchActive()) return false;
     const handoff = getIeloveHandoff();
     const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
-    return handoff.records.every((_, i) => Array.isArray(choices[i]?.__companies) && choices[i].__verifiedFiveConditions === true);
+    return handoff.records.every((_, i) => Array.isArray(choices[i]?.__companies) && choices[i].__fastRoomFilterVersion === IELOVE_FAST_ROOM_FILTER_VERSION && choices[i].__searchUrl === handoff.searches[i].url);
   }
 
   function showIeloveSelectionLaunchButton() {
@@ -2325,24 +2325,9 @@
     return /条件に(?:あう|合う|一致する)物件がありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text);
   }
 
-  // SUUMO検索結果は全ページを確認してから、5条件一致の掲載だけ保存する。
+  // 築年月・丁目はSUUMOキーワード検索で建物を絞る。一覧で階数・面積・賃料を照合し、詳細ページは開かない。
+  const IELOVE_FAST_ROOM_FILTER_VERSION = 'keyword-built-room-v1';
   let ieloveCollecting = false;
-  function readSuumoBuiltYearMonth(html) {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const norm = value => String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim();
-    const compact = value => norm(value).replace(/\s+/g, "");
-    const pattern = /([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/;
-    for (const el of doc.querySelectorAll("th,dt")) {
-      if (compact(el.textContent) !== "築年月") continue;
-      for (const text of [el.nextElementSibling?.textContent, el.parentElement?.textContent]) {
-        const match = norm(text).match(pattern);
-        if (match) return Number(match[1]) + "-" + String(Number(match[2])).padStart(2, "0");
-      }
-    }
-    const match = norm(doc.body?.textContent).match(/築年月\s*[:：]?\s*([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/);
-    return match ? Number(match[1]) + "-" + String(Number(match[2])).padStart(2, "0") : null;
-  }
-
   function parseSuumoRoomTarget(searchUrl) {
     const url = new URL(searchUrl, location.origin);
     const fw = String(url.searchParams.get("fw") || "").normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -2353,18 +2338,18 @@
     if (!built || !floor || !area || !rent || Number(built[2]) < 1 || Number(built[2]) > 12) {
       throw new Error("SUUMO検索条件（住所・築年月・階数・面積・賃料）を読み取れません");
     }
-    const address = fw.slice(0, built.index).replace(/\s+/g, "");
+    const address = fw.slice(0, built.index).replace(/\s+/g, "").replace(/(\d+)丁目$/, "$1");
     if (!address) throw new Error("検索住所が空欄です");
     return {
       address, floor:Number(floor[1]), area:Number(area[1]), rentYen:Math.round(Number(rent[1])*10000),
-      built:Number(built[1])+"-"+String(Number(built[2])).padStart(2,"0")
+      searchBuilt:Number(built[1])+"年"+Number(built[2])+"月"
     };
   }
 
-  // 検索一覧にない築年月は詳細ページから取得する。曖昧な結果は採用しない。
+  // 住所は検索後も一覧で照合（末尾の3丁目と3は同じ丁目として扱う）。
   function readSuumoRoomCard(card) {
     const norm = value => String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim();
-    const compact = value => norm(value).replace(/\s+/g, "");
+    const compact = value => norm(value).replace(/\s+/g, "").replace(/(\d+)丁目$/, "$1");
     const title=norm(card.querySelector(".property_inner-title")?.textContent);
     const floor=title.match(/(\d+)\s*階/);
     const rent=norm(card.querySelector(".detailbox-property-point")?.textContent).match(/([\d.]+)\s*万円/);
@@ -2424,16 +2409,16 @@
     const all=new Map();
     let previousIds="", previousHasNext=false, pageCount=0, pagesFinished=false;
     const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-    async function getPage(url,detailPage=false) {
+    async function getPage(url) {
       const targetUrl=new URL(url,location.origin);
-      if(targetUrl.origin!==location.origin || !(detailPage ? /^\/chintai\/bc_\d+\/?/.test(targetUrl.pathname) : targetUrl.pathname.startsWith("/jj/chintai/ichiran/"))) {
+      if(targetUrl.origin!==location.origin || !targetUrl.pathname.startsWith("/jj/chintai/ichiran/")) {
         throw new Error("SUUMOの許可対象外URLです");
       }
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(),12000);
       try {
         const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
-        if(!response.ok)throw new Error("HTTP "+response.status+"："+(detailPage?"掲載詳細":"検索")+"の取得失敗");
+        if(!response.ok)throw new Error("HTTP "+response.status+"：検索ページの取得失敗");
         const type=response.headers.get("content-type")||"";
         if(type&&!type.includes("html"))throw new Error("HTML形式以外の応答です");
         const html=await response.text();
@@ -2460,7 +2445,11 @@
       }
       const currentRows=cards.map(readSuumoRoomCard);
       const finger=currentRows.map(x=>x.id||x.titleHref).join("|");
-      if(!finger || (page>1&&finger===previousIds))throw new Error("検索ページが重複したため全件確認できません");
+      if(!finger)throw new Error("検索ページを読み取れません");
+      if(page>1 && finger===previousIds){
+        if(previousHasNext)throw new Error("次ページへ進めず検索ページが重複しました");
+        pagesFinished=true;break;
+      }
       previousIds=finger;
       const nextLink=[...doc.querySelectorAll("a[href]")].some(link=>{
         try{
@@ -2489,35 +2478,21 @@
         all.set(row.id,row);
       }
       pageCount++;
-      showIeloveRoomScanProgress((propertyIndex+1)+"件目：検索ページ "+pageCount+" / 候補 "+all.size+"件\n築年月の照合はページ取得後に開始します");
+      showIeloveRoomScanProgress((propertyIndex+1)+"件目：検索ページ "+pageCount+" / 住戸条件一致 "+all.size+"件\n築年月 "+target.searchBuilt+" はSUUMO検索キーワードで絞り込み済み（個別検証なし）");
       if(!nextLink&&cards.length<perPage){pagesFinished=true;break;}
       if(page===maxPages)throw new Error("検索結果が80ページを超えたため全件取得を停止しました");
       await delay(240);
     }
     if(!pagesFinished)throw new Error("検索ページの最終ページを確認できません");
-    const groups=new Map(),knownBuild=new Map();
-    let completed=0;
+    // 詳細ページ照合を廃止：一覧の住戸条件に一致したカードを会社単位にまとめる。
+    const groups=new Map();
     for(const item of all.values()){
-      if(!isAuthorizedIeloveBatchSearch())throw new Error("検索タブが切り替わりました");
-      let built=knownBuild.get(item.id);
-      if(!knownBuild.has(item.id)){
-        const url=new URL(item.titleHref,location.origin);
-        if(!/^\/chintai\/bc_\d+\/?/.test(url.pathname)||!url.pathname.includes(item.id))throw new Error("詳細URLと掲載IDが一致しません");
-        const html=await getPage(url.href,true);
-        if(!html.includes(item.id))throw new Error("取得した詳細ページと掲載IDが一致しません");
-        built=readSuumoBuiltYearMonth(html);
-        if(!built)throw new Error("掲載ID "+item.id+" の築年月を確認できません");
-        knownBuild.set(item.id,built);
-      }
-      if(built===target.built){
-        if(!groups.has(item.companyKey))groups.set(item.companyKey,{key:item.companyKey,name:item.companyName,urls:[]});
-        groups.get(item.companyKey).urls.push("https://suumo.jp/chintai/bc_"+item.id+"/");
-      }
-      completed++;
-      showIeloveRoomScanProgress((propertyIndex+1)+"件目：全"+pageCount+"ページ取得済み\n築年月 "+completed+"/"+all.size+"件 確認完了");
-      if(completed<all.size)await delay(320);
+      if(!groups.has(item.companyKey))groups.set(item.companyKey,{key:item.companyKey,name:item.companyName,urls:[]});
+      groups.get(item.companyKey).urls.push("https://suumo.jp/chintai/bc_"+item.id+"/");
     }
-    console.info("[SUUMO JJ 上位版] 5条件の全ページ照合",{propertyIndex,pageCount,checked:all.size,companies:groups.size});
+    console.info("[SUUMO JJ 上位版] キーワード築年月＋住戸3条件の照合完了",{
+      propertyIndex,pageCount,matched:all.size,companies:groups.size,searchBuilt:target.searchBuilt
+    });
     return [...groups.values()];
   }
 
@@ -2528,7 +2503,7 @@
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
     if (new URL(location.href).searchParams.get("fw") !== new URL(handoff.searches[index].url).searchParams.get("fw")) return;
     const selections = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
-    if (Array.isArray(selections[index]?.__companies) && selections[index].__verifiedFiveConditions === true) {
+    if (Array.isArray(selections[index]?.__companies) && selections[index].__fastRoomFilterVersion === IELOVE_FAST_ROOM_FILTER_VERSION && selections[index].__searchUrl === handoff.searches[index].url) {
       if (index < handoff.records.length - 1) navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
       return;
@@ -2539,11 +2514,11 @@
       const companies=await scanIeloveSuumoPages(handoff.searches[index].url,index);
       if(!isAuthorizedIeloveBatchSearch())return;
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
-      latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,__verifiedFiveConditions:true};
+      latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,__fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,__searchUrl:handoff.searches[index].url};
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
       markAdvancedTiming("search-collect-complete",String(index+1)+"物件 / "+companies.length+"社");
       document.getElementById("tm-ielove-room-scan-progress")?.remove();
-      toast("5条件照合完了："+(index+1)+"/"+handoff.records.length+"物件",1600);
+      toast("住戸条件の照合完了："+(index+1)+"/"+handoff.records.length+"物件",1600);
       if(index<handoff.records.length-1)navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
     } catch(error) {
@@ -2598,7 +2573,7 @@
     title.textContent = "SUUMO 一括指摘対象の選択";
     title.style.cssText = "font-weight:bold;font-size:21px";
     const subtitle = document.createElement("div");
-    subtitle.textContent = handoff.records.length + "物件の掲載会社をまとめて選択";
+    subtitle.textContent = handoff.records.length + "物件の掲載会社をまとめて選択（築年月は検索キーワードで絞り込み）";
     subtitle.style.cssText = "font-size:13px;color:#666;margin-top:5px";
     head.append(title,subtitle);
     const list = document.createElement("div");
@@ -2754,7 +2729,7 @@
     const missingProfiles = [];
     for (let i = 0; i < handoff.records.length; i++) {
       const selection = saved[i];
-      if (!selection || !Array.isArray(selection.__companies) || selection.__verifiedFiveConditions !== true) {
+      if (!selection || !Array.isArray(selection.__companies) || (selection.__fastRoomFilterVersion !== IELOVE_FAST_ROOM_FILTER_VERSION || selection.__searchUrl !== handoff.searches[i].url)) {
         incomplete.push(i + 1);
         continue;
       }
