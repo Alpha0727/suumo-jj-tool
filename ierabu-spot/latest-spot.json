@@ -1,0 +1,5 @@
+{
+  "version": "1.0",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/IERABU-SPOT-1.0.user.js",
+  "notes": "スポット周辺環境自動化の初回GitHub版。絞り込み済み全件処理、徒歩距離確認、重複物件の選択解除確認、停止・リセット・進捗ログに対応。"
+}
