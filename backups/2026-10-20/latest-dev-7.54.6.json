@@ -1,0 +1,5 @@
+{
+  "version": "7.54.6",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
+  "notes": "上位版：SUUMO検索結果で物件IDと会社名が取得できない問題を修正。会社リンクなし掲載に対応し、異なるIDを混同せず、取得不能時は掲載IDと不足項目を表示。一般版8.0は変更なし。"
+}
