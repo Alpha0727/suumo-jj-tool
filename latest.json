@@ -1,5 +1,5 @@
 {
-  "version": "7.53",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.53.user.js",
-  "notes": "検索結果の全ページを自動取得し、住所・階数・面積・賃料・築年月の一致物件を抽出。照合後に会社別選択画面を自動表示。Ver.7.50バックアップ済み。"
+  "version": "7.50",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-7.50.user.js",
+  "notes": "SUUMO側の『指摘設定』ボタンの文字を上下左右中央揃えに修正。サイズ・配置・機能は変更なし。"
 }
