@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      7.50
-// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
+// @version      7.53
+// @description  SUUMO一括申告＋いえらぶCLOUD設定入力。検索全ページの住戸5条件照合と会社一覧自動表示に対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.50";
+  const SCRIPT_VERSION = "7.53";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -140,6 +140,7 @@
     return 0;
   }
 
+  // GitHubの本番更新メタデータを確認する。
   function checkScriptUpdate() {
     const status = document.getElementById("tm-version-status");
     const alertMark = document.getElementById("tm-update-alert");
@@ -228,20 +229,6 @@
     });
   }
 
-  // SUUMO申告フォームの実HTMLから確認済みの固定入力欄。
-  // ラベル文字の推測ではなく、各入力欄をIDで直接指定する。
-  const FIELDS = {
-    company:      "#textSinkokuKaisya",
-    manager1:     "#textSinkokusyaName",
-    tel:          "#renrakusakiTelNo",
-    email:        "#textSinkokuMail",
-    mgmt_company: "#js-textKanriKaisya",
-    mgmt_tel:     "#js-textKanriKaisyaTel",
-    manager2:     "#js-textKanriKaisyaTantouName",
-    room:         "#js-textMansitu"
-  };
-
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   function qsAll(selector, root = document) {
     try { return Array.from(root.querySelectorAll(selector)); }
     catch { return []; }
@@ -622,9 +609,24 @@
     GM_setValue(EXCLUDED_COMPANIES_KEY, clean);
   }
 
+  // 検索一覧で有効化された住戸条件フィルターだけを、会社別一括申告にも適用する。
+  let roomFilterSelection = null;
+  let roomFilterAvailable = false;
+  let roomFilterScanState = 'idle';
+  let roomFilterMatchedListings = null;
+
   function getCompaniesFromSearchResults() {
     const cards = qsAll(".property-body");
     const companyMap = new Map();
+    if (Array.isArray(roomFilterMatchedListings)) {
+      for (const item of roomFilterMatchedListings) {
+        if (!companyMap.has(item.company)) companyMap.set(item.company, {company:item.company,items:[]});
+        const group=companyMap.get(item.company);
+        if (!group.items.some(listing => listing.propertyId===item.propertyId))
+          group.items.push({propertyId:item.propertyId,url:item.url});
+      }
+      return Array.from(companyMap.values());
+    }
 
     for (const card of cards) {
       const clip = card.querySelector('input[id="clipkey"]');
@@ -636,6 +638,9 @@
         const match = rel.match(/(?:^|_)(\d{8,})$/);
         if (match) propertyId = match[1];
       }
+
+      // CSSで非表示にしただけではDOMには掲載が残るため、IDでも必ず照合する。
+      if (roomFilterSelection && !roomFilterSelection.has(propertyId)) continue;
 
       const companyLink = card.querySelector('a[href^="/chintai/kaisha/"]');
       const company = companyLink?.textContent?.trim() || "";
@@ -657,6 +662,14 @@
   }
 
   function openCompanySelection() {
+    if (roomFilterAvailable && roomFilterScanState !== 'ready') {
+      toast('住戸の自動照合が完了するまで会社選択はできません。',5000);
+      return;
+    }
+    if (roomFilterAvailable && !roomFilterMatchedListings?.length) {
+      toast('現在の条件に一致する申告候補はありません。',5000);
+      return;
+    }
     document.getElementById("tm-company-dialog")?.remove();
     const companies = getCompaniesFromSearchResults();
 
@@ -1957,6 +1970,266 @@
     }
   });
 
+  // SUUMO住戸の全ページ・5条件一致スキャン。送信操作は一切行わない。
+  function startAutomaticRoomSearch() {
+    if (roomFilterScanState !== 'idle' || isBatchActive()) return;
+    const normalize = value => String(value == null ? '' : value).normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const compact = value => normalize(value).replace(/\s+/g, '');
+    const params = new URLSearchParams(location.search);
+    const fw = normalize(params.get('fw') || '');
+    const yearMonth = fw.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
+    const floorMatch = fw.match(/(\d+)\s*階/);
+    const areaMatch = fw.match(/(\d+(?:\.\d+)?)\s*(?:㎡|m(?:2)?)(?![A-Za-z0-9])/i);
+    const rentMatch = fw.match(/(\d+(?:\.\d+)?)\s*万円/);
+    const target = {
+      address: yearMonth ? compact(fw.slice(0,yearMonth.index)) : '',
+      built: yearMonth ? Number(yearMonth[1]) + '-' + String(Number(yearMonth[2])).padStart(2,'0') : '',
+      floor: floorMatch ? Number(floorMatch[1]) : null,
+      area: areaMatch ? Number(areaMatch[1]) : null,
+      rentYen: rentMatch ? Math.round(Number(rentMatch[1])*10000) : null
+    };
+    if (!target.address || !target.built || Number(yearMonth[2])<1 || Number(yearMonth[2])>12 ||
+        target.floor === null || target.area === null || target.rentYen === null) return;
+
+    roomFilterAvailable = true;
+    roomFilterScanState = 'scanning';
+    roomFilterMatchedListings = null;
+    roomFilterSelection = null;
+
+    let stopped = false;
+    let activeController = null;
+    let currentRecords = [];
+    const hideClass = 'tm-room-auto-hidden';
+    if (!document.getElementById('tm-room-auto-style')) {
+      const style = document.createElement('style');
+      style.id = 'tm-room-auto-style';
+      style.textContent = '.' + hideClass + '{display:none!important}';
+      document.head.appendChild(style);
+    }
+    document.getElementById('tm-room-auto-progress')?.remove();
+    const panel = document.createElement('div');
+    panel.id='tm-room-auto-progress';
+    Object.assign(panel.style,{
+      position:'fixed',right:'14px',bottom:'16px',zIndex:'2147483646',
+      width:'350px',maxWidth:'calc(100vw - 35px)',boxSizing:'border-box',
+      padding:'12px 14px',background:'#fff',border:'2px solid #167755',
+      borderRadius:'12px',boxShadow:'0 5px 20px #0003',
+      font:'13px/1.5 system-ui,Meiryo,sans-serif',color:'#22313b'
+    });
+    const heading=document.createElement('div');
+    heading.style.cssText='font-size:15px;font-weight:700';
+    heading.textContent='SUUMO 住戸を自動照合中';
+    const detail=document.createElement('div');
+    detail.style.cssText='white-space:pre-line;margin:7px 0';
+    detail.textContent='検索ページを確認しています…';
+    const row=document.createElement('div');
+    row.style.cssText='display:flex;gap:8px;justify-content:flex-end';
+    const stopButton=document.createElement('button');
+    stopButton.textContent='中止';
+    stopButton.style.cssText='padding:7px 12px;border:1px solid #ccd4da;background:#fff;border-radius:7px;cursor:pointer';
+    const retryButton=document.createElement('button');
+    retryButton.textContent='再検索';
+    retryButton.style.cssText='display:none;padding:7px 12px;border:0;background:#167755;color:#fff;border-radius:7px;cursor:pointer';
+    row.append(retryButton,stopButton);
+    panel.append(heading,detail,row);
+    document.body.append(panel);
+    stopButton.onclick=()=> {
+      stopped=true;
+      activeController?.abort();
+      roomFilterScanState='cancelled';
+      roomFilterMatchedListings=null;
+      roomFilterSelection=null;
+      for(const element of document.querySelectorAll('.'+hideClass)) element.classList.remove(hideClass);
+      heading.textContent='自動照合を中止しました';
+      detail.textContent='結果は一括申告に引き渡していません。';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+    };
+    retryButton.onclick=()=> {
+      for(const element of document.querySelectorAll('.'+hideClass)) element.classList.remove(hideClass);
+      panel.remove();
+      roomFilterScanState='idle';
+      roomFilterAvailable=false;
+      startAutomaticRoomSearch();
+    };
+
+    const readCard=card=>{
+      const title=normalize(card.querySelector('.property_inner-title')?.textContent);
+      const floor=title.match(/(\d+)\s*階/);
+      const rent=normalize(card.querySelector('.detailbox-property-point')?.textContent).match(/([\d.]+)\s*万円/);
+      const cells=[...card.querySelectorAll('.detailbox-property tr > td')];
+      const area=normalize(cells[2]?.textContent).match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
+      const id=card.querySelector('input[name="bc"]')?.value || card.querySelector('input[id="clipkey"]')?.value || '';
+      const company=normalize(card.querySelector('a[href^="/chintai/kaisha/"]')?.textContent);
+      const href=card.querySelector('.property_inner-title a[href^="/chintai/"]')?.getAttribute('href') || '';
+      return {
+        id,company,href,card,
+        address:compact(cells[4]?.textContent),
+        floor:floor ? Number(floor[1]) : null,
+        rentYen:rent ? Math.round(Number(rent[1])*10000) : null,
+        area:area ? Number(area[1]) : null
+      };
+    };
+    const readBuilt=html=>{
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const ym=/([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/;
+      for(const cell of doc.querySelectorAll('th,dt')){
+        if(compact(cell.textContent)!=='築年月')continue;
+        const candidates=[cell.nextElementSibling?.textContent,cell.parentElement?.textContent];
+        for(const candidate of candidates){
+          const found=normalize(candidate).match(ym);
+          if(found)return Number(found[1])+'-'+String(Number(found[2])).padStart(2,'0');
+        }
+      }
+      const found=normalize(doc.body?.textContent).match(/築年月\s*[:：]?\s*([12]\d{3})\s*年\s*(0?[1-9]|1[0-2])\s*月/);
+      return found ? Number(found[1])+'-'+String(Number(found[2])).padStart(2,'0') : null;
+    };
+    const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    async function getHtml(url) {
+      if(stopped)throw Error('中止');
+      const u=new URL(url,location.href);
+      if(u.origin!==location.origin || !u.pathname.startsWith('/jj/chintai/ichiran/') && !u.pathname.startsWith('/chintai/'))
+        throw Error('SUUMO以外のURLを検出しました');
+      const controller=new AbortController();
+      activeController=controller;
+      const timer=setTimeout(()=>controller.abort(),12000);
+      try{
+        const response=await fetch(u.href,{credentials:'same-origin',signal:controller.signal});
+        if(!response.ok)throw Error('ページ取得失敗 HTTP '+response.status);
+        const type=response.headers.get('content-type') || '';
+        if(type && !type.includes('html'))throw Error('HTML以外の応答');
+        const html=await response.text();
+        if(html.length<1000)throw Error('ページ内容が不完全です');
+        return html;
+      }finally{
+        clearTimeout(timer);
+        if(activeController===controller)activeController=null;
+      }
+    }
+    function showMatchedOnCurrentPage(ids) {
+      const list=document.querySelector('#js-bukkenList');
+      if(!list)return;
+      for(const card of list.querySelectorAll('.js-property')){
+        const id=card.querySelector('input[name="bc"]')?.value;
+        card.classList.toggle(hideClass,!ids.has(id));
+      }
+      for(const group of list.querySelectorAll('.property_group')){
+        group.classList.toggle(hideClass,![...group.querySelectorAll('.js-property')].some(c=>!c.classList.contains(hideClass)));
+      }
+      for(const summary of list.querySelectorAll('.summarize'))summary.classList.add(hideClass);
+    }
+
+    (async()=>{
+      const rows=new Map();
+      const base=new URL(location.href);
+      base.searchParams.delete('iimon');
+      base.searchParams.delete('utm_source');
+      base.searchParams.set('pn','1');
+      const pageSize=Math.max(1,Number(params.get('pc')) || 30);
+      const firstIsCurrent=!params.has('pn') || params.get('pn')==='1';
+      let pageDoc=firstIsCurrent ? document :
+        new DOMParser().parseFromString(await getHtml(base.href),'text/html');
+      let pagesRead=0,previousFingerprint='',previousHadNext=false;
+      const maxPages=80, matched=[];
+      for(let pn=1;pn<=maxPages;pn++){
+        if(stopped)return;
+        if(pn>1){
+          const url=new URL(base.href);
+          url.searchParams.set('pn',String(pn));
+          pageDoc=new DOMParser().parseFromString(await getHtml(url.href),'text/html');
+        }
+        const cards=[...(pageDoc.querySelector('#js-bukkenList')?.querySelectorAll('.js-property')||[])];
+        if(!cards.length && pn===1)throw Error('検索結果を取得できませんでした');
+        if(!cards.length) {
+          if(previousHadNext)throw Error('次の検索ページを取得できませんでした');
+          break;
+        }
+        const current=cards.map(readCard);
+        const fingerprint=current.map(v=>v.id).filter(Boolean).join(',');
+        const nextPageLink=[...pageDoc.querySelectorAll('a[href]')].some(a=>{
+          try{const u=new URL(a.getAttribute('href'),base.href);
+            return u.origin===base.origin && u.pathname===base.pathname &&
+              Number(u.searchParams.get('pn'))===pn+1;
+          }catch(_){return false;}
+        });
+        if(pn>1 && fingerprint===previousFingerprint){
+          if(previousHadNext || nextPageLink)throw Error('ページ番号を変更しても結果が切り替わりません。全件取得できないため停止しました');
+          break;
+        }
+        previousFingerprint=fingerprint;
+        previousHadNext=nextPageLink;
+        pagesRead++;
+        for(const v of current){
+          if(!v.id)continue;
+          if(rows.has(v.id))continue;
+          rows.set(v.id,v);
+        }
+        detail.textContent='検索ページ：'+pagesRead+'ページ / 調査済み '+rows.size+'件\n4条件の一致候補を抽出中';
+        // 次ページのリンクが無く、1ページの掲載数が満たない場合は最終ページと判定。
+        if(!nextPageLink && cards.length<pageSize)break;
+        // 件数がページサイズと同じ場合は次ページの有無を問い合わせる。
+        if(pn===maxPages)throw Error('検索結果が80ページを超えました。全件確認できないため処理を停止しました');
+        await wait(240);
+      }
+      for(const v of rows.values()){
+        if(v.address===target.address && v.floor===target.floor &&
+           v.rentYen===target.rentYen && v.area===target.area) matched.push(v);
+      }
+      detail.textContent='検索ページ：'+pagesRead+'ページ / 全'+rows.size+'掲載\n4条件一致：'+matched.length+'件\n築年月を確認しています…';
+      let verified=0,unknown=0,mismatched=0;
+      const confirmed=[];
+      for(const candidate of matched){
+        if(stopped)return;
+        let reason='';
+        if(!candidate.href || !candidate.id){reason='URLまたはID不明';}
+        else{
+          try{
+            const detailUrl=new URL(candidate.href,location.origin);
+            if(detailUrl.origin!==location.origin || !/^\/chintai\/(?:bc_|jnc_)/.test(detailUrl.pathname))throw Error('詳細URLが不正です');
+            const html=await getHtml(detailUrl.href);
+            if(!html.includes(candidate.id))throw Error('詳細ページの物件IDが一致しません');
+            const built=readBuilt(html);
+            if(built===null)reason='築年月を取得できません';
+            else if(built===target.built){
+              if(candidate.company)confirmed.push({propertyId:candidate.id,company:candidate.company,
+                url:'https://suumo.jp/chintai/bc_'+candidate.id+'/'});
+              else reason='取り扱い会社が不明です';
+            }else mismatched++;
+          }catch(err){if(stopped)return;reason=String(err?.message||err);}
+        }
+        if(reason)unknown++;
+        verified++;
+        detail.textContent='検索ページ：'+pagesRead+'ページ / 全'+rows.size+'掲載\n4条件一致：'+matched.length+'件\n築年月照合：'+verified+'/'+matched.length+'件';
+        if(verified<matched.length)await wait(320);
+      }
+      if(stopped)return;
+      roomFilterMatchedListings=confirmed;
+      roomFilterSelection=new Set(confirmed.map(v=>v.propertyId));
+      roomFilterScanState='ready';
+      showMatchedOnCurrentPage(roomFilterSelection);
+      heading.textContent='住戸の照合が完了しました';
+      detail.textContent='確認ページ：'+pagesRead+' / 掲載：'+rows.size+'件\n5条件一致：'+confirmed.length+'件\n築年月不一致：'+mismatched+'件 / 未確認：'+unknown+'件';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+      if(unknown)detail.textContent+='\n※未確認物件は安全のため自動選択していません。';
+      if(confirmed.length)openCompanySelection();
+      else{
+        heading.textContent='一致物件が見つかりませんでした';
+        detail.textContent+='\n条件を確認するか、再検索してください。';
+      }
+    })().catch(error=>{
+      if(stopped)return;
+      roomFilterMatchedListings=null;
+      roomFilterSelection=null;
+      roomFilterScanState='failed';
+      heading.textContent='自動照合を完了できませんでした';
+      detail.textContent=String(error?.message||error)+'\n途中までの結果は一括申告に利用していません。';
+      stopButton.style.display='none';
+      retryButton.style.display='inline-block';
+      for(const element of document.querySelectorAll('.'+hideClass))element.classList.remove(hideClass);
+    });
+  }
+
   async function init() {
     while (!document.body) await sleep(50);
 
@@ -1965,7 +2238,7 @@
     // ここで保存した値は同じTampermonkeyスクリプトの保存領域を使うため、
     // SUUMO側の申告フォームでもそのまま利用できる。
     if (location.hostname === "cloud.ielove.jp") {
-      addIeloveSettingsButton();
+        addIeloveSettingsButton();
       requireProfileManager();
       return;
     }
@@ -1973,8 +2246,12 @@
     if (location.hostname !== "suumo.jp") return;
 
     addMainButtons();
+    // 住戸自動照合は担当者未設定でも動き、申告開始時は既存の担当者設定を要求する。
+    if (/^\/jj\/chintai\/ichiran\//.test(location.pathname) && !isBatchActive()) {
+      startAutomaticRoomSearch();
+      return;
+    }
     if (!requireProfileManager()) return;
-
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
     updateBatchPanel();
