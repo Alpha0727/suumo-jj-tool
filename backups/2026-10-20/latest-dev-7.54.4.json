@@ -1,0 +1,5 @@
+{
+  "version": "7.54.4",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
+  "notes": "分析速いもん等でSUUMO検索を開いても会社選択画面を自動表示しない。上位版専用の一括取得タブのみ情報収集し、完了後は『一括で指摘に進む』またはSUUMO指摘設定内『一括処理』で選択画面を開く。"
+}
