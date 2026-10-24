@@ -1,12 +1,12 @@
 // Run: node tests/optimization.cjs (requires Playwright and Chromium).
-// Only local fixtures: no real-site requests or submissions.
+// Regression benchmark pinned to v7.54.8 archive. Only local fixtures; no real-site requests or submissions.
 const {chromium} = require('playwright');
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const old = fs.readFileSync(path.join(root,'backups/2026-10-24-before-7.54.8/SUUMO-DEV.user.js'),'utf8');
-const current = fs.readFileSync(path.join(root,'SUUMO-DEV.user.js'),'utf8');
+const current = fs.readFileSync(path.join(root,'releases/SUUMO-DEV-7.54.8.user.js'),'utf8');
 const keyword = '東京都葛飾区金町3 2024年5月 1階 18.98m 6.7万円';
 function search(pc=100, fw=keyword) {return 'https://suumo.jp/jj/chintai/ichiran/FR301FC011/?'+new URLSearchParams({fw,pc:String(pc),suumo_jj_batch:'fixture'})}
 function card(i, opt={}) {
