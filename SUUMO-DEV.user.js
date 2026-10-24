@@ -1027,7 +1027,7 @@
     return true;
   }
   function showBatchIssueResults(){
-    if(!openIssueResults())toast("一括処理が終了しました",2200);
+    openIssueResults(); // 成功だけの処理では結果ウィンドウを出さない。
   }
   function clearReportRetry(phase){
     const state=GM_getValue(REPORT_RETRY_KEY,null);
@@ -2780,6 +2780,7 @@
       if(!isAuthorizedIeloveBatchSearch(active)||active.token!==handoff.token||
          active.index!==handoff.index||active.searches[index]?.url!==handoff.searches[index].url||
          isAnyBatchActive())return;
+      const allAttemptsFailed=companies===null;
       if(companies===null){
         recordIssue({phase:"検索",index:index+1,kind:"検索・会社情報取得失敗",
           action:"最大3回試行後スキップ",attempts,
@@ -2792,7 +2793,7 @@
       }
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
       latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,
-        __collectionError:!!lastError&&companies.length===0,
+        __collectionError:allAttemptsFailed,
         __fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,
         __searchUrl:handoff.searches[index].url};
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
