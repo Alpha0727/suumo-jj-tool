@@ -2493,6 +2493,7 @@
       /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)/.test(text) ||
       /検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text) ||
       /(?:賃貸)?(?:物件)?検索結果\s*[:：]?\s*0\s*件/.test(text) ||
+      /賃貸(?:物件)?\s*[:：]?\s*0\s*件/.test(text) ||
       /検索結果が\s*(?:0\s*件|ありません|見つかりません)/.test(text) ||
       /(?:物件|お部屋)(?:が|は)\s*見つかりません(?:でした)?/.test(text) ||
       /該当する物件はありません/.test(text) ||
@@ -2787,9 +2788,9 @@
           detail:String(lastError?.message||lastError||"検索結果を読み取れません")});
         companies=[];
       }else if(!companies.length && !issueList().some(x=>x.phase==="検索"&&x.index===index+1)){
-        recordIssue({phase:"検索",index:index+1,kind:"一致する掲載会社0件",
+        recordIssue({phase:"検索",index:index+1,kind:"住戸条件一致0件・掲載会社0件",
           action:"再検索せず自動スキップ",attempts,
-          detail:"SUUMOで0件表示、または全ページで住戸条件に一致する掲載がありません"});
+          detail:"全検索ページを確認しましたが住所・階数・面積・賃料に一致する掲載がありません"});
       }
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
       latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,
