@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.7
+// @version      7.54.8
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.7";
+  const SCRIPT_VERSION = "7.54.8";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -497,6 +497,7 @@
       return false;
     }
 
+    const preparationStarted = performance.now();
     formPreparationRunning = true;
     setBatchStage(STAGES.INPUT_PREPARING);
     GM_setValue(FORM_PREP_ATTEMPTS_KEY, attempts + 1);
@@ -551,6 +552,7 @@
       toast("申告フォームを準備できませんでした。\n「この物件を再実行」または「スキップ」を選んでください。", 6000);
       return false;
     } finally {
+      advancedMetric("report-form", preparationStarted, {ready:isFormReady()});
       formPreparationRunning = false;
     }
   }
@@ -637,8 +639,6 @@
     GM_setValue(BATCH_KEYS.urls, urls);
     GM_setValue(BATCH_KEYS.index, index);
     GM_setValue(BATCH_KEYS.active, true);
-    setBatchStage(STAGES.LISTING);
-    setBatchStage(STAGES.LISTING);
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
@@ -2009,6 +2009,8 @@
       toast("物件一覧が見つかりません。いえらぶの物件一覧画面で実行してください。", 5000);
       return;
     }
+    const acquisitionStarted = performance.now();
+    markAdvancedTiming("ielove-acquisition-start");
     button.disabled = true;
     button.textContent = "取得中 0/" + rows.length;
     const records = [];
@@ -2044,6 +2046,8 @@
       toast("取得を中断しました：" + String(error.message || error), 6000);
       console.error("[SUUMO JJ DEV] いえらぶ一括取得:", error);
     } finally {
+      advancedMetric("ielove-acquisition", acquisitionStarted, {completed:records.length, total:rows.length});
+      markAdvancedTiming("ielove-acquisition-end");
       button.disabled = false;
       button.textContent = "一括取得";
     }
@@ -2171,6 +2175,7 @@
     const handoff = { records:draft.records, searches:results, index:0, createdAt, token };
     GM_deleteValue("ielove_suumo_choices_v1");
     GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
+    markAdvancedTiming("search-navigation-start");
     const tab = window.open(results[0].url, "_blank");
     if (!tab) toast("SUUMOタブを開けませんでした。ポップアップ許可を確認してください。", 6000);
   }
@@ -2316,11 +2321,19 @@
     GM_setValue(ADVANCED_TIMING_KEY, { stage, startedAt:now });
   }
 
+  function advancedMetric(stage, started, details = {}) {
+    const record = {stage, ms:performance.now()-started, ...details};
+    console.debug("[SUUMO JJ 上位版] 性能", record);
+    return record;
+  }
+
   // SUUMOの0件表示は「条件にあう物件がありません」等、複数表記に対応。
-  function isConfirmedNoResultMessage() {
-    if (document.readyState !== "complete") return false;
-    if (document.querySelector(".property-body")) return false;
-    const text = document.body?.innerText || "";
+  function isConfirmedNoResultMessage(doc = document) {
+    if (doc === document && document.readyState !== "complete") return false;
+    if (doc.querySelector(".property-body")) return false;
+    const body=doc.body?.cloneNode(true);
+    body?.querySelectorAll("script,style,template,noscript").forEach(el=>el.remove());
+    const text = doc === document ? (doc.body?.innerText || "") : (body?.textContent || "");
     // 「不動産会社0件」は、賃貸物件0件とは限らない。
     return /条件に(?:あう|合う|一致する)物件がありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text);
   }
@@ -2353,16 +2366,17 @@
     const title=norm(card.querySelector(".property_inner-title")?.textContent);
     const floor=title.match(/(\d+)\s*階/);
     const rent=norm(card.querySelector(".detailbox-property-point")?.textContent).match(/([\d.]+)\s*万円/);
-    const cells=[...card.querySelectorAll(".detailbox-property tr > td")];
+    const cells=card.querySelectorAll(".detailbox-property tr > td");
     const area=norm(cells[2]?.textContent).match(/([\d.]+)\s*(?:㎡|m\s*2)/i);
     const companyLink=card.querySelector('a[href*="/chintai/kaisha/"]');
-    const note=card.querySelector(".detailnote-box-item");
+    const linkedCompany=companyLink?.textContent || companyLink?.getAttribute("title") || "";
+    const note=linkedCompany ? null : card.querySelector(".detailnote-box-item");
     const plainCompany=note ? [...note.querySelectorAll("div")].filter(div=>
       !div.closest(".ui-text--bold") && !div.classList.contains("ui-text--bold")
     ).map(div=>norm(div.textContent)).find(text=>
       text && !/お電話の際|SUUMOを見た|0120[\s-]*\d+|^\d{2,5}[-\s]\d+/.test(text)
     ) || "" : "";
-    const companyName=norm(companyLink?.textContent || companyLink?.getAttribute("title") || plainCompany);
+    const companyName=norm(linkedCompany || plainCompany);
     const companyHref=companyLink?.getAttribute("href") || "";
     const companyKey=companyHref.replace(/^https?:\/\/[^/]+/i,"").replace(/[?#].*$/,"").replace(/\/$/,"") || (companyName ? "name:"+companyName : "");
     // 掲載IDは物件カード固有のチェック欄または物件名リンクから確定する。
@@ -2399,53 +2413,109 @@
   }
 
   async function scanIeloveSuumoPages(searchUrl, propertyIndex) {
+    const scanStarted=performance.now();
     const target=parseSuumoRoomTarget(searchUrl);
     const base=new URL(searchUrl,location.origin);
     if(base.origin!==location.origin || !base.pathname.startsWith("/jj/chintai/ichiran/")) throw new Error("検索URLが不正です");
     const current=new URL(location.href);
+    const owner=getIeloveHandoff();
+    const assertCurrent=()=>{
+      const latest=getIeloveHandoff();
+      if(!isAuthorizedIeloveBatchSearch(latest) || latest.token!==owner?.token ||
+        latest.index!==owner?.index || latest.searches[propertyIndex]?.url!==searchUrl || isAnyBatchActive()) {
+        throw new Error("取得中に対象物件または実行状態が変わったため停止しました");
+      }
+    };
+    assertCurrent();
     const baseParams=new URLSearchParams(base.search);
     const perPage=Math.min(100,Math.max(1,Number(baseParams.get("pc"))||30));
     const maxPages=80;
     const all=new Map();
     let previousIds="", previousHasNext=false, pageCount=0, pagesFinished=false;
-    const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    const seenPages=new Set();
+    const metrics={requests:0,retries:0,networkMs:0,parseMs:0,matchMs:0,waitMs:0};
+    // 直列取得を維持。応答・解析時間も240msの開始間隔に含め、二重待機をなくす。
+    let lastRequestStarted=performance.now();
     async function getPage(url) {
       const targetUrl=new URL(url,location.origin);
       if(targetUrl.origin!==location.origin || !targetUrl.pathname.startsWith("/jj/chintai/ichiran/")) {
         throw new Error("SUUMOの許可対象外URLです");
       }
-      const controller=new AbortController();
-      const timer=setTimeout(()=>controller.abort(),12000);
-      try {
-        const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
-        if(!response.ok)throw new Error("HTTP "+response.status+"：検索ページの取得失敗");
-        const type=response.headers.get("content-type")||"";
-        if(type&&!type.includes("html"))throw new Error("HTML形式以外の応答です");
-        const html=await response.text();
-        if(html.length<1000)throw new Error("ページ内容が不完全です");
-        return html;
-      } finally { clearTimeout(timer); }
+      for(let attempt=0;attempt<3;attempt++){
+        assertCurrent();
+        const wait=Math.max(0,240-(performance.now()-lastRequestStarted));
+        if(wait){await sleep(wait);metrics.waitMs+=wait;}
+        assertCurrent();
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),12000);
+        const started=performance.now();
+        lastRequestStarted=started;
+        metrics.requests++;
+        let retryMs=750*2**attempt;
+        try {
+          const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
+          if(!response.ok){
+            const error=new Error("HTTP "+response.status+"：検索ページの取得失敗");
+            error.noRetry=![408,429,500,502,503,504].includes(response.status);
+            const after=response.headers.get("retry-after");
+            if(after){
+              const ms=/^\d+$/.test(after)?Number(after)*1000:Date.parse(after)-Date.now();
+              if(Number.isFinite(ms))retryMs=Math.max(retryMs,ms);
+            }
+            if(retryMs>60000)error.noRetry=true;
+            throw error;
+          }
+          const type=response.headers.get("content-type")||"";
+          if(type&&!type.includes("html"))throw Object.assign(new Error("HTML形式以外の応答です"),{noRetry:true});
+          const html=await response.text();
+          assertCurrent();
+          if(html.length<1000)throw Object.assign(new Error("ページ内容が不完全です"),{noRetry:true});
+          return html;
+        } catch(error){
+          assertCurrent();
+          if(error.noRetry||attempt===2)throw error;
+          metrics.retries++;
+        } finally {
+          clearTimeout(timer);
+          metrics.networkMs+=performance.now()-started;
+        }
+        await sleep(retryMs);
+        metrics.waitMs+=retryMs;
+      }
     }
+    const comparable=url=>{
+      const copy=new URL(url);
+      copy.searchParams.delete("pn");copy.searchParams.delete("iimon");
+      copy.searchParams.sort();return copy.href;
+    };
+    const sameSearch=comparable(current)===comparable(base);
     // pn=1 は現在表示中のページを使い、pn=2以降は同じ検索条件で巡回する。
     for(let page=1;page<=maxPages;page++){
-      if(!isAuthorizedIeloveBatchSearch())throw new Error("現在の検索タブの認証情報が一致しません");
+      assertCurrent();
       const pageUrl=new URL(base.href);
       pageUrl.searchParams.delete("iimon");
       pageUrl.searchParams.set("pn",String(page));
-      const doc=page===1&&(!current.searchParams.has("pn")||current.searchParams.get("pn")==="1")
-        ? document : new DOMParser().parseFromString(await getPage(pageUrl.href),"text/html");
+      const reuse=page===1&&(!current.searchParams.has("pn")||current.searchParams.get("pn")==="1")&&sameSearch;
+      const html=reuse?null:await getPage(pageUrl.href);
+      const parseStarted=performance.now();
+      const doc=reuse?document:new DOMParser().parseFromString(html,"text/html");
+      metrics.parseMs+=performance.now()-parseStarted;
+      const matchStarted=performance.now();
       const cards=[...(doc.querySelector("#js-bukkenList")?.querySelectorAll(".js-property")||[])];
       if(page===1&&!cards.length) {
-        if(isConfirmedNoResultMessage())return [];
+        if(isConfirmedNoResultMessage(doc)){advancedMetric("search-total",scanStarted,metrics);return [];}
         throw new Error("検索結果のカードが見つかりません");
       }
       if(!cards.length){
         if(previousHasNext)throw new Error("次ページへのリンクがあるのに、検索結果を取得できません");
+        if(!isConfirmedNoResultMessage(doc))throw new Error("最終ページの0件表示を確認できません");
         pagesFinished=true;break;
       }
       const currentRows=cards.map(readSuumoRoomCard);
       const finger=currentRows.map(x=>x.id||x.titleHref).join("|");
       if(!finger)throw new Error("検索ページを読み取れません");
+      if(page>1 && seenPages.has(finger) && finger!==previousIds)throw new Error("検索ページが循環したため停止しました");
+      seenPages.add(finger);
       if(page>1 && finger===previousIds){
         if(previousHasNext)throw new Error("次ページへ進めず検索ページが重複しました");
         pagesFinished=true;break;
@@ -2477,19 +2547,23 @@
         }
         all.set(row.id,row);
       }
+      metrics.matchMs+=performance.now()-matchStarted;
       pageCount++;
       showIeloveRoomScanProgress((propertyIndex+1)+"件目：検索ページ "+pageCount+" / 住戸条件一致 "+all.size+"件\n築年月 "+target.searchBuilt+" はSUUMO検索キーワードで絞り込み済み（個別検証なし）");
       if(!nextLink&&cards.length<perPage){pagesFinished=true;break;}
       if(page===maxPages)throw new Error("検索結果が80ページを超えたため全件取得を停止しました");
-      await delay(240);
     }
     if(!pagesFinished)throw new Error("検索ページの最終ページを確認できません");
     // 詳細ページ照合を廃止：一覧の住戸条件に一致したカードを会社単位にまとめる。
+    assertCurrent();
+    const groupingStarted=performance.now();
     const groups=new Map();
     for(const item of all.values()){
       if(!groups.has(item.companyKey))groups.set(item.companyKey,{key:item.companyKey,name:item.companyName,urls:[]});
       groups.get(item.companyKey).urls.push("https://suumo.jp/chintai/bc_"+item.id+"/");
     }
+    advancedMetric("company-grouping",groupingStarted,{matched:all.size});
+    advancedMetric("search-total",scanStarted,{...metrics,pageCount});
     console.info("[SUUMO JJ 上位版] キーワード築年月＋住戸3条件の照合完了",{
       propertyIndex,pageCount,matched:all.size,companies:groups.size,searchBuilt:target.searchBuilt
     });
@@ -2512,7 +2586,8 @@
     try{
       markAdvancedTiming("search-collect-start",String(index+1));
       const companies=await scanIeloveSuumoPages(handoff.searches[index].url,index);
-      if(!isAuthorizedIeloveBatchSearch())return;
+      const active=getIeloveHandoff();
+      if(!isAuthorizedIeloveBatchSearch(active)||active.token!==handoff.token||active.index!==handoff.index||active.searches[index]?.url!==handoff.searches[index].url||isAnyBatchActive())return;
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
       latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,__fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,__searchUrl:handoff.searches[index].url};
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
@@ -2556,6 +2631,8 @@
   function openIeloveSuumoSelection() {
     const handoff = getIeloveHandoff();
     if (!handoff || isBatchActive() || !isIeloveSelectionReady()) return;
+    const selectionStarted = performance.now();
+    markAdvancedTiming("all-properties-complete");
     const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
     if (handoff.records.some((_,i) => !Array.isArray(choices[i]?.__companies))) return;
     document.getElementById("tm-ielove-suumo-selection")?.remove();
@@ -2654,6 +2731,8 @@
     overlay.appendChild(shell);
     document.body.appendChild(overlay);
     update();
+    advancedMetric("company-selection-dom", selectionStarted);
+    requestAnimationFrame(() => markAdvancedTiming("company-selection-visible"));
   }
 
   function navigateIeloveSuumo(delta) {
@@ -2661,6 +2740,7 @@
     if (!handoff) return;
     handoff.index = Math.max(0, Math.min((Number(handoff.index)||0)+delta, handoff.records.length - 1));
     GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
+    markAdvancedTiming("search-navigation-start");
     location.href = handoff.searches[handoff.index].url;
   }
 

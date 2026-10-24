@@ -1,0 +1,5 @@
+{
+  "version": "7.54.7",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
+  "notes": "上位版高速化：SUUMO検索キーワード（住所・築年月）で候補を絞り、検索一覧の住所・階数・面積・賃料だけを照合。築年月のための詳細ページ取得を廃止し、全ページ取得後に会社一覧を自動表示。一般版8.0は変更しません。"
+}

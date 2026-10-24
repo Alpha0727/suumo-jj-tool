@@ -1,0 +1,97 @@
+{
+  "environment": "Headless Chromium, local generated fixtures, simulated 300ms response latency; not live SUUMO",
+  "passed": 31,
+  "benchmark": [
+    {
+      "oldMs": 1651.5999999999767,
+      "newMs": 1159.5999999999767,
+      "requests": 3,
+      "oldParseMs": 7.800000000104774,
+      "newParseMs": 8.399999999965075,
+      "newMetrics": [
+        {
+          "stage": "company-grouping",
+          "ms": 0.29999999998835847,
+          "matched": 301
+        },
+        {
+          "stage": "search-total",
+          "ms": 1158.399999999965,
+          "requests": 3,
+          "retries": 0,
+          "networkMs": 902.2000000000116,
+          "parseMs": 8.5,
+          "matchMs": 8.70000000006985,
+          "waitMs": 236.40000000002328,
+          "pageCount": 4
+        }
+      ]
+    },
+    {
+      "oldMs": 1652.100000000035,
+      "newMs": 1158.9000000000233,
+      "requests": 3,
+      "oldParseMs": 8.299999999988358,
+      "newParseMs": 8,
+      "newMetrics": [
+        {
+          "stage": "company-grouping",
+          "ms": 0.20000000001164153,
+          "matched": 301
+        },
+        {
+          "stage": "search-total",
+          "ms": 1157.7999999999884,
+          "requests": 3,
+          "retries": 0,
+          "networkMs": 902.0999999999767,
+          "parseMs": 8.099999999976717,
+          "matchMs": 10.100000000093132,
+          "waitMs": 234.20000000001164,
+          "pageCount": 4
+        }
+      ]
+    },
+    {
+      "oldMs": 1650.2999999999884,
+      "newMs": 1158.9000000000233,
+      "requests": 3,
+      "oldParseMs": 8.199999999953434,
+      "newParseMs": 8.100000000034925,
+      "newMetrics": [
+        {
+          "stage": "company-grouping",
+          "ms": 0.29999999998835847,
+          "matched": 301
+        },
+        {
+          "stage": "search-total",
+          "ms": 1157.899999999965,
+          "requests": 3,
+          "retries": 0,
+          "networkMs": 902.1999999999534,
+          "parseMs": 8.200000000011642,
+          "matchMs": 9,
+          "waitMs": 234.5,
+          "pageCount": 4
+        }
+      ]
+    }
+  ],
+  "parserBench": [
+    [
+      29.5,
+      29.900000000023283,
+      30.79999999998836,
+      27.29999999998836,
+      26.79999999998836
+    ],
+    [
+      20.70000000001164,
+      15.799999999988358,
+      17.20000000001164,
+      18.199999999953434,
+      20.600000000034925
+    ]
+  ]
+}

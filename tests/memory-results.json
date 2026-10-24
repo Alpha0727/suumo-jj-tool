@@ -1,0 +1,33 @@
+{
+  "description": "1000 synthetic cards, one retained DOM and parsed rows, CDP heap after GC; not peak process memory",
+  "results": [
+    {
+      "before": {
+        "usedSize": 1766900,
+        "totalSize": 2379776,
+        "embedderHeapUsedSize": 821568,
+        "backingStorageSize": 243662
+      },
+      "after": {
+        "usedSize": 1466700,
+        "totalSize": 2154496,
+        "embedderHeapUsedSize": 8992368,
+        "backingStorageSize": 131265
+      }
+    },
+    {
+      "before": {
+        "usedSize": 1784548,
+        "totalSize": 2396160,
+        "embedderHeapUsedSize": 595720,
+        "backingStorageSize": 251662
+      },
+      "after": {
+        "usedSize": 1520220,
+        "totalSize": 2154496,
+        "embedderHeapUsedSize": 7231504,
+        "backingStorageSize": 135215
+      }
+    }
+  ]
+}
