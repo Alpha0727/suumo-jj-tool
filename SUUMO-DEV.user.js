@@ -1313,8 +1313,6 @@
     const displayedId=(location.pathname.match(/\/chintai\/bc_(\d+)/i)||[])[1];
     // 異なる掲載IDへ手動で移動した場合、別の掲載を誤ってスキップしない。
     if(!expectedId||(displayedId&&displayedId!==expectedId))return false;
-    recordIssue({phase:"申告",index:index+1,kind:"掲載終了",action:"自動スキップ",
-      detail:"SUUMO側の掲載終了案内を確認",attempts:0,url:expected});
     return advancePastSkippedListing("SUUMO掲載終了");
   }
 
@@ -1425,6 +1423,10 @@
     watchdogBusy = true;
     try {
       const stage = getBatchStage();
+      if(currentIeloveExecutionItem()?.status==="sending" && !isCompletePage()){
+        advanceUncertainSubmission("送信後の完了ページを確認できず、画面が復帰しました");
+        return;
+      }
 
       if (isInputPage()) {
         if (stage === STAGES.INPUT_READY || stage === STAGES.INPUT_CONFIRM) {
@@ -2572,7 +2574,7 @@
     el.textContent=message;
   }
 
-  async function scanIeloveSuumoPages(searchUrl, propertyIndex) {
+  async function scanIeloveSuumoPages(searchUrl, propertyIndex, forceFetchFirst=false) {
     const scanStarted=performance.now();
     const target=parseSuumoRoomTarget(searchUrl);
     const base=new URL(searchUrl,location.origin);
@@ -2598,53 +2600,47 @@
     let lastRequestStarted=performance.now();
     async function getPage(url) {
       const targetUrl=new URL(url,location.origin);
-      if(targetUrl.origin!==location.origin || !targetUrl.pathname.startsWith("/jj/chintai/ichiran/")) {
-        throw new Error("SUUMOの許可対象外URLです");
+      if(targetUrl.origin!==location.origin || !targetUrl.pathname.startsWith("/jj/chintai/ichiran/")){
+        throw Object.assign(new Error("SUUMOの許可対象外URLです"),{scanNoRetry:true});
       }
-      for(let attempt=0;attempt<3;attempt++){
-        assertCurrent();
-        const wait=Math.max(0,240-(performance.now()-lastRequestStarted));
-        if(wait){await sleep(wait);metrics.waitMs+=wait;}
-        assertCurrent();
-        const controller=new AbortController();
-        const timer=setTimeout(()=>controller.abort(),12000);
-        const started=performance.now();
-        lastRequestStarted=started;
-        metrics.requests++;
-        let retryMs=RETRY_WAIT_MS;
-        try {
-          const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
-          if(!response.ok){
-            const error=new Error("HTTP "+response.status+"：検索ページの取得失敗");
-            error.noRetry=![408,429,500,502,503,504].includes(response.status);
-            const after=response.headers.get("retry-after");
-            if(after){
-              const ms=/^\d+$/.test(after)?Number(after)*1000:Date.parse(after)-Date.now();
-              if(Number.isFinite(ms))retryMs=Math.max(retryMs,ms);
-            }
-            if(retryMs>60000)error.noRetry=true;
-            throw error;
+      assertCurrent();
+      const wait=Math.max(0,240-(performance.now()-lastRequestStarted));
+      if(wait){await sleep(wait);metrics.waitMs+=wait;}
+      assertCurrent();
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),12000);
+      const started=performance.now();
+      lastRequestStarted=started;
+      metrics.requests++;
+      try{
+        const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
+        if(!response.ok){
+          const error=new Error("HTTP "+response.status+"：検索ページの取得失敗");
+          if(![408,429,500,502,503,504].includes(response.status))error.scanNoRetry=true;
+          const after=response.headers.get("retry-after");
+          if(after){
+            const ms=/^\d+$/.test(after)?Number(after)*1000:Date.parse(after)-Date.now();
+            // SUUMOが明示的に500msより長い待機を要求する場合は、連続再試行しない。
+            if(Number.isFinite(ms)&&ms>RETRY_WAIT_MS)error.scanNoRetry=true;
           }
-          const type=response.headers.get("content-type")||"";
-          if(type&&!type.includes("html"))throw Object.assign(new Error("HTML形式以外の応答です"),{noRetry:true});
-          const html=await response.text();
-          assertCurrent();
-          if(html.length<1000)throw Object.assign(new Error("ページ内容が不完全です"),{noRetry:true});
-          return html;
-        } catch(error){
-          assertCurrent();
-          if(error.noRetry||attempt===2){
-            throw Object.assign(new Error(String(error?.message||error)),{scanNoRetry:true});
-          }
-          metrics.retries++;
-        } finally {
-          clearTimeout(timer);
-          metrics.networkMs+=performance.now()-started;
+          throw error;
         }
-        await sleep(retryMs);
-        metrics.waitMs+=retryMs;
+        const type=response.headers.get("content-type")||"";
+        if(type&&!type.includes("html")){
+          throw Object.assign(new Error("HTML形式以外の応答です"),{scanNoRetry:true});
+        }
+        const html=await response.text();
+        assertCurrent();
+        if(html.length<1000){
+          throw Object.assign(new Error("ページ内容が不完全です"),{scanNoRetry:true});
+        }
+        return html;
+      } finally{
+        clearTimeout(timer);
+        metrics.networkMs+=performance.now()-started;
       }
     }
+
     const comparable=url=>{
       const copy=new URL(url);
       copy.searchParams.delete("pn");copy.searchParams.delete("iimon");
@@ -2657,7 +2653,7 @@
       const pageUrl=new URL(base.href);
       pageUrl.searchParams.delete("iimon");
       pageUrl.searchParams.set("pn",String(page));
-      const reuse=page===1&&(!current.searchParams.has("pn")||current.searchParams.get("pn")==="1")&&sameSearch;
+      const reuse=!forceFetchFirst&&page===1&&(!current.searchParams.has("pn")||current.searchParams.get("pn")==="1")&&sameSearch;
       const html=reuse?null:await getPage(pageUrl.href);
       const parseStarted=performance.now();
       const doc=reuse?document:new DOMParser().parseFromString(html,"text/html");
@@ -2767,7 +2763,7 @@
       for(let attempt=1;attempt<=MAX_STAGE_ATTEMPTS;attempt++){
         attempts=attempt;
         try{
-          companies=await scanIeloveSuumoPages(handoff.searches[index].url,index);
+          companies=await scanIeloveSuumoPages(handoff.searches[index].url,index,attempt>1);
           break;
         }catch(error){
           lastError=error;
@@ -2796,6 +2792,7 @@
       }
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
       latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,
+        __collectionError:!!lastError&&companies.length===0,
         __fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,
         __searchUrl:handoff.searches[index].url};
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
@@ -2891,7 +2888,9 @@
       const companies = choices[index].__companies;
       if (!companies.length) {
         const empty = document.createElement("div");
-        empty.textContent = "掲載会社なし・指摘対象0件";
+        empty.textContent = choices[index].__collectionError?
+          "検索／会社情報取得に失敗・指摘対象0件（エラー記録済み）":
+          "掲載会社なし・指摘対象0件（自動スキップ）";
         empty.style.cssText = "color:#777;font-size:13px;padding:6px 0";
         section.appendChild(empty);
       }
@@ -3053,7 +3052,7 @@
     }
     const items = [...unique.values()];
     if (!items.length) {
-      alert("指摘対象がありません。選択内容を確認してください。");
+      if(!openIssueResults())alert("指摘対象がありません。選択内容を確認してください。");
       return;
     }
     if (!confirm(handoff.records.length + "物件から" + items.length + "掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
@@ -3201,6 +3200,10 @@
 
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
+    if(currentIeloveExecutionItem()?.status==="sending"&&!isCompletePage()){
+      advanceUncertainSubmission("送信後の完了画面を確認できませんでした");
+      return;
+    }
     updateBatchPanel();
 
     if (isListingPage()) {
@@ -3214,12 +3217,7 @@
 
     if (isInputPage()) {
       if (isSubmitting()) {
-        setSubmitting(false);
-        setConfirmReady(false);
-        setBatchError(true);
-        setFormReady(false);
-        updateBatchPanel();
-        toast("送信が完了せず入力画面へ戻りました。\n入力エラーを確認してください。", 6000);
+        scheduleReportRetry("内容確認画面へ移動","SUUMOの確認画面へ進まず入力画面に戻りました");
         return;
       }
 
