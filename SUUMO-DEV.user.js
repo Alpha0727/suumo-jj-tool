@@ -2602,7 +2602,7 @@
         const started=performance.now();
         lastRequestStarted=started;
         metrics.requests++;
-        let retryMs=750*2**attempt;
+        let retryMs=RETRY_WAIT_MS;
         try {
           const response=await fetch(targetUrl.href,{credentials:"same-origin",signal:controller.signal});
           if(!response.ok){
@@ -2624,7 +2624,9 @@
           return html;
         } catch(error){
           assertCurrent();
-          if(error.noRetry||attempt===2)throw error;
+          if(error.noRetry||attempt===2){
+            throw Object.assign(new Error(String(error?.message||error)),{scanNoRetry:true});
+          }
           metrics.retries++;
         } finally {
           clearTimeout(timer);
@@ -2665,7 +2667,12 @@
         cards=[...(doc.querySelector("#js-bukkenList")?.querySelectorAll(".js-property")||[])];
       }
       if(page===1&&!cards.length) {
-        if(isConfirmedNoResultMessage(doc)){advancedMetric("search-total",scanStarted,metrics);return [];}
+        if(isConfirmedNoResultMessage(doc)){
+          recordIssue({phase:"検索",index:propertyIndex+1,kind:"検索結果0件",
+            action:"即時自動スキップ",detail:"SUUMOが検索結果0件を明示"});
+          advancedMetric("search-total",scanStarted,metrics);
+          return [];
+        }
         throw new Error("検索結果のカードが見つかりません");
       }
       if(!cards.length){
@@ -2747,23 +2754,46 @@
     ieloveCollecting = true;
     try{
       markAdvancedTiming("search-collect-start",String(index+1));
-      const companies=await scanIeloveSuumoPages(handoff.searches[index].url,index);
+      let companies=null,lastError=null,attempts=0;
+      for(let attempt=1;attempt<=MAX_STAGE_ATTEMPTS;attempt++){
+        attempts=attempt;
+        try{
+          companies=await scanIeloveSuumoPages(handoff.searches[index].url,index);
+          break;
+        }catch(error){
+          lastError=error;
+          const message=String(error?.message||error);
+          // 対象切替・申告バッチ開始など、状態が変わった場合には安全停止。
+          if(/取得中に対象物件または実行状態が変わった/.test(message))return;
+          console.warn("[SUUMO JJ 上位版] 検索取得失敗",attempt+"/"+MAX_STAGE_ATTEMPTS,message);
+          if(attempt===MAX_STAGE_ATTEMPTS||error?.scanNoRetry)break;
+          showIeloveRoomScanProgress((index+1)+"件目：検索処理を再試行 "+(attempt+1)+"/3");
+          await sleep(RETRY_WAIT_MS);
+        }
+      }
       const active=getIeloveHandoff();
-      if(!isAuthorizedIeloveBatchSearch(active)||active.token!==handoff.token||active.index!==handoff.index||active.searches[index]?.url!==handoff.searches[index].url||isAnyBatchActive())return;
+      if(!isAuthorizedIeloveBatchSearch(active)||active.token!==handoff.token||
+         active.index!==handoff.index||active.searches[index]?.url!==handoff.searches[index].url||
+         isAnyBatchActive())return;
+      if(companies===null){
+        recordIssue({phase:"検索",index:index+1,kind:"検索・会社情報取得失敗",
+          action:"最大3回試行後スキップ",attempts,
+          detail:String(lastError?.message||lastError||"検索結果を読み取れません")});
+        companies=[];
+      }else if(!companies.length && !issueList().some(x=>x.phase==="検索"&&x.index===index+1)){
+        recordIssue({phase:"検索",index:index+1,kind:"一致する掲載会社0件",
+          action:"再検索せず自動スキップ",attempts,
+          detail:"SUUMOで0件表示、または全ページで住戸条件に一致する掲載がありません"});
+      }
       const latest=GM_getValue(IELOVE_SUUMO_CHOICES_KEY,{});
-      latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,__fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,__searchUrl:handoff.searches[index].url};
+      latest[index]={__companies:companies,__collected:true,__emptyResult:!companies.length,
+        __fastRoomFilterVersion:IELOVE_FAST_ROOM_FILTER_VERSION,
+        __searchUrl:handoff.searches[index].url};
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
       markAdvancedTiming("search-collect-complete",String(index+1)+"物件 / "+companies.length+"社");
       document.getElementById("tm-ielove-room-scan-progress")?.remove();
-      toast(companies.length?"住戸条件の照合完了："+(index+1)+"/"+handoff.records.length+"物件":"検索結果0件・申告候補なし：自動スキップ "+(index+1)+"/"+handoff.records.length+"物件",1600);
       if(index<handoff.records.length-1)navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
-    } catch(error) {
-      document.getElementById("tm-ielove-room-scan-progress")?.remove();
-      console.error("[SUUMO JJ 上位版] 全ページ照合失敗:",error);
-      showIeloveCollectionError(index);
-      const message=document.querySelector("#tm-ielove-suumo-selection p");
-      if(message)message.textContent=String(error?.message||error)+"。途中の候補は保存していません。再取得を選んでください。";
     } finally {
       ieloveCollecting=false;
     }
@@ -2797,6 +2827,10 @@
     markAdvancedTiming("all-properties-complete");
     const choices = GM_getValue(IELOVE_SUUMO_CHOICES_KEY, {});
     if (handoff.records.some((_,i) => !Array.isArray(choices[i]?.__companies))) return;
+    if(!handoff.records.some((_,i)=>choices[i].__companies.length)){
+      openIssueResults();
+      return;
+    }
     document.getElementById("tm-ielove-suumo-selection")?.remove();
     const exclusions = new Set(GM_getValue(IELOVE_SUUMO_GLOBAL_EXCLUDES, []));
     const modes = {};
@@ -2838,6 +2872,7 @@
       });
     };
     handoff.records.forEach((record,index) => {
+      if(!choices[index].__companies.length)return; // 0件物件は対象選択から除外
       const section = document.createElement("section");
       section.style.cssText = "padding:14px;margin-bottom:12px;border:1px solid #dce3e8;border-radius:12px;background:#fff";
       const heading = document.createElement("div");
