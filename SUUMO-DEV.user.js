@@ -75,6 +75,7 @@
   const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
   const REPORT_RETRY_KEY = "suumo_advanced_report_retry_v1";
+  const FINAL_SEND_GUARD_KEY = "suumo_advanced_final_send_guard_v1";
   const RETRY_WAIT_MS = 500;
   const MAX_STAGE_ATTEMPTS = 3;
 
@@ -645,6 +646,7 @@
       GM_setValue(ISSUE_LOG_KEY, []);
     }
     GM_deleteValue(REPORT_RETRY_KEY);
+    GM_deleteValue(FINAL_SEND_GUARD_KEY);
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -1058,9 +1060,14 @@
     },RETRY_WAIT_MS);
     return true;
   }
+  function currentUncertainSend(){
+    if(!isBatchActive())return false;
+    const record=GM_getValue(FINAL_SEND_GUARD_KEY,null),index=getBatchIndex();
+    return record?.status==="sending"&&record.index===index&&record.url===getBatchUrls()[index];
+  }
   function advanceUncertainSubmission(detail){
     const item=currentIeloveExecutionItem();
-    if(!item||item.status!=="sending"||nextListingStarted)return false;
+    if((item?.status!=="sending"&&!currentUncertainSend())||nextListingStarted)return false;
     recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
       action:"要確認・自動再送信せず次へ",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
     return advancePastSkippedListing("送信結果不明",true);
@@ -1072,6 +1079,7 @@
     if (nextListingStarted || !isBatchActive()) return;
     if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
+    GM_deleteValue(FINAL_SEND_GUARD_KEY);
 
     const urls = getBatchUrls();
     let index = getBatchIndex();
@@ -1174,6 +1182,9 @@
     await sleep(250);
     if (!isBatchActive() || !isConfirmPage() || confirmSendStarted || !sendLink.isConnected) return;
     confirmSendStarted = true;
+    const currentIndex=getBatchIndex();
+    GM_setValue(FINAL_SEND_GUARD_KEY,{index:currentIndex,url:getBatchUrls()[currentIndex],
+      status:"sending",startedAt:Date.now()});
     saveIeloveExecutionStatus("sending");
     markAdvancedTiming("final-send-clicked");
     sendLink.click();
@@ -1186,6 +1197,7 @@
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
+    GM_deleteValue(FINAL_SEND_GUARD_KEY);
     clearReportRetry();
     setSubmitting(true);
     setConfirmReady(false);
@@ -1196,7 +1208,7 @@
   }
 
   function retryCurrentListing() {
-    if (currentIeloveExecutionItem()?.status === "sending") {
+    if (currentIeloveExecutionItem()?.status === "sending"||currentUncertainSend()) {
       toast("送信結果が未確認です。再実行すると二重送信になる可能性があります。", 6500);
       return;
     }
@@ -1238,7 +1250,7 @@
     if(!urls[index])return false;
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&!item)return false;
-    if(uncertain && item?.status!=="sending")return false;
+    if(uncertain && item?.status!=="sending"&&!currentUncertainSend())return false;
     if(item&&item.status==="sending"&&!uncertain)return false;
     nextListingStarted=true;
     cancelAutoAction(false);
@@ -1253,6 +1265,7 @@
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
     GM_setValue(BATCH_SKIP_LOG_KEY,log);
     saveIeloveExecutionStatus(uncertain?"uncertain":"skipped");
+    if(uncertain)GM_deleteValue(FINAL_SEND_GUARD_KEY);
     const execution=getIeloveExecution();
     if(execution?.items[index]?.url===urls[index]){
       execution.items[index].skipReason=String(reason||"スキップ");
@@ -1283,7 +1296,7 @@
   }
 
   function skipBatchItem() {
-    if(currentIeloveExecutionItem()?.status==="sending"){
+    if(currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend()){
       toast("送信結果が未確認のため、この掲載はスキップできません。確認後に中止してください。",6500);
       return;
     }
@@ -1423,7 +1436,7 @@
     watchdogBusy = true;
     try {
       const stage = getBatchStage();
-      if(currentIeloveExecutionItem()?.status==="sending" && !isCompletePage()){
+      if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend()) && !isCompletePage()){
         advanceUncertainSubmission("送信後の完了ページを確認できず、画面が復帰しました");
         return;
       }
@@ -2996,7 +3009,7 @@
 
   function blockUncertainIeloveResend() {
     const item = currentIeloveExecutionItem();
-    if(!item||item.status!=="sending")return false;
+    if((!item||item.status!=="sending")&&!currentUncertainSend())return false;
     if(isCompletePage()||confirmSendStarted)return true;
     cancelAutoAction(false);
     return advanceUncertainSubmission("最終送信を開始しましたが、完了画面を確認できません");
@@ -3202,7 +3215,7 @@
 
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
-    if(currentIeloveExecutionItem()?.status==="sending"&&!isCompletePage()){
+    if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend())&&!isCompletePage()){
       advanceUncertainSubmission("送信後の完了画面を確認できませんでした");
       return;
     }
