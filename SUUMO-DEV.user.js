@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.8
+// @version      7.54.9
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -123,7 +123,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.8";
+  const SCRIPT_VERSION = "7.54.9";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -967,10 +967,12 @@
     setTimeout(() => { location.href = urls[index]; }, 150);
   }
 
-  // 1回目：パネルを確認モードへ
-  // 2回目：SUUMOの内容確認画面へ進む
+  // 入力完了後は独自の二段階確認を挟まず、SUUMO本来の内容確認画面へ進む。
+  // 物件ID・管理情報の一致、送信状態、フォーム準備完了は引き続き検証する。
   async function submitCurrentAndContinue() {
-    if (!isBatchActive()) return;
+    if (!isBatchActive() || !isInputPage() || !isFormReady() || isBatchError()) return;
+    if (getBatchStage() !== STAGES.INPUT_READY && getBatchStage() !== STAGES.INPUT_CONFIRM) return;
+    if (blockUncertainIeloveResend()) return;
 
     if (isSubmitting()) {
       toast("現在送信処理中です");
@@ -992,14 +994,7 @@
       toast("物件ごとの管理会社情報が一致しません。送信を停止しました。", 6000);
       return;
     }
-    if (!isConfirmReady()) {
-      autoActionCancelledPhase = null;
-      setConfirmReady(true);
-      setBatchStage(STAGES.INPUT_CONFIRM);
-      updateBatchPanel();
-      return;
-    }
-
+    // INPUT_CONFIRM は旧版から復帰したケースのみ許容し、確認UIは表示しない。
     setConfirmReady(false);
     setSubmitting(true);
     setBatchStage(STAGES.SUBMITTING_CONFIRM);
@@ -1194,7 +1189,8 @@
     return location.pathname.includes("/jj/chintai/shiryou/FR400FG003/");
   }
 
-  const AUTO_ACTION_MS = 1000;
+  const AUTO_ACTION_MS = 300;
+  const AUTO_ACTION_SINGLE_PHASE = 'single-submit-v7549';
   const AUTO_ACTION_PHASE_KEY = "suumo_auto_action_phase";
   const AUTO_ACTION_DEADLINE_KEY = "suumo_auto_action_deadline";
   const FORM_PREP_ATTEMPTS_KEY = "suumo_form_prep_attempts";
@@ -1229,7 +1225,7 @@
     const button = document.getElementById("tm-submit-next");
     if (!button) return;
 
-    const phase = isConfirmReady() ? "confirm-send" : "first-send";
+    const phase = AUTO_ACTION_SINGLE_PHASE;
     const savedPhase = GM_getValue(AUTO_ACTION_PHASE_KEY, "");
     const savedDeadline = Number(GM_getValue(AUTO_ACTION_DEADLINE_KEY, 0));
 
@@ -1248,8 +1244,9 @@
 
       if (isInputPage()) {
         if (stage === STAGES.INPUT_READY || stage === STAGES.INPUT_CONFIRM) {
+          if (stage === STAGES.INPUT_CONFIRM) setBatchStage(STAGES.INPUT_READY);
           setFormReady(true);
-          setConfirmReady(stage === STAGES.INPUT_CONFIRM);
+          setConfirmReady(false);
           updateBatchPanel();
           recoverAutoActionIfDue();
         }
@@ -1258,16 +1255,8 @@
 
       if (isConfirmPage()) {
         if ((stage === STAGES.SUBMITTING_CONFIRM || stage === STAGES.SUBMITTING_FINAL) && !confirmSendStarted) {
-          setSubmitting(true);
-          setBatchStage(STAGES.SUBMITTING_FINAL);
-          const sendLink = document.querySelector(
-            'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]'
-          );
-          if (sendLink && !blockUncertainIeloveResend()) {
-            confirmSendStarted = true;
-            saveIeloveExecutionStatus("sending");
-            sendLink.click();
-          }
+          // 復帰時も通常ルートを使い、SUUMO画面確認・最終送信前250msを維持する。
+          await handleConfirmPage();
         }
         return;
       }
@@ -1369,7 +1358,6 @@
     const urls = getBatchUrls();
     const index = getBatchIndex();
     const submitting = isSubmitting();
-    const confirmReady = isConfirmReady();
     const batchError = isBatchError();
     const formReady = isFormReady();
 
@@ -1399,7 +1387,7 @@
       '<span style="display:inline-block;margin-right:7px;max-width:100%;overflow-wrap:anywhere;"><span style="color:#64748b;">' +
       escapeHtml(label) + '：</span>' + escapeHtml(String(value || "未設定")) + '</span>'
     ).join("");
-    let statusText = "入力内容を確認してください。";
+    let statusText = "入力内容を照合済みです。SUUMOの内容確認画面へ自動進行します。";
     let statusBackground = "#fff6d8";
 
     if (batchError) {
@@ -1408,9 +1396,6 @@
     } else if (isInputPage() && !formReady) {
       statusText = "申告フォームを準備しています…\n完了するまでお待ちください。";
       statusBackground = "#f2f2f2";
-    } else if (confirmReady) {
-      statusText = "⚠ この内容で送信しますか？\n入力内容を最終確認してください。";
-      statusBackground = "#fff1e6";
     } else if (isConfirmPage()) {
       statusText = "SUUMOの内容確認画面です。送信処理中…";
       statusBackground = "#eaf3ff";
@@ -1431,20 +1416,10 @@
     let mainButton = "";
 
     if (canSubmit) {
-      if (confirmReady) {
-        mainButton = `
-          <button id="tm-submit-next" style="width:100%;padding:13px;border:0;border-radius:9px;background:#f6b867;color:#fff;font-size:15px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
-            ✓ 確認しました → 送信する
-          </button>
-          <button id="tm-cancel-confirm" style="width:100%;padding:9px;border:1px solid #aaa;border-radius:8px;background:#fff;color:#333;font-size:13px;cursor:pointer;margin-bottom:7px;">
-            ← 戻る
-          </button>`;
-      } else {
-        mainButton = `
-          <button id="tm-submit-next" style="width:100%;padding:11px;border:0;border-radius:9px;background:#9fc2fb;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
-            この申告を送信 → 次の物件
-          </button>`;
-      }
+      mainButton = `
+        <button id="tm-submit-next" style="width:100%;padding:11px;border:0;border-radius:9px;background:#9fc2fb;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
+          SUUMO内容確認へ進む（自動）
+        </button>`;
     } else if (batchError && !uncertainSend) {
       mainButton = `
         <button id="tm-retry-current" style="width:100%;padding:11px;border:0;border-radius:9px;background:#d9363e;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
@@ -1472,9 +1447,9 @@
 
     const submit = document.getElementById("tm-submit-next");
     if (submit) {
-      const phase = confirmReady ? "confirm-send" : "first-send";
-      const strongColor = confirmReady ? "#e67e00" : "#2f7cf6";
-      const lightColor = confirmReady ? "#f6b867" : "#9fc2fb";
+      const phase = AUTO_ACTION_SINGLE_PHASE;
+      const strongColor = "#2f7cf6";
+      const lightColor = "#9fc2fb";
 
       submit.onclick = () => {
         autoActionCancelledPhase = null;
@@ -1491,16 +1466,7 @@
     const retryCurrent = document.getElementById("tm-retry-current");
     if (retryCurrent) retryCurrent.onclick = retryCurrentListing;
 
-    const cancelConfirm = document.getElementById("tm-cancel-confirm");
-    if (cancelConfirm) {
-      cancelConfirm.onclick = () => {
-        cancelAutoAction(true);
-        setConfirmReady(false);
-        updateBatchPanel();
-      };
-    }
-
-    const skip = document.getElementById("tm-skip-item");
+     const skip = document.getElementById("tm-skip-item");
     if (skip && !submitting) {
       skip.onclick = () => {
         cancelAutoAction(false);
@@ -3019,8 +2985,9 @@
 
       const stage = getBatchStage();
       if (stage === STAGES.INPUT_READY || stage === STAGES.INPUT_CONFIRM) {
+        if (stage === STAGES.INPUT_CONFIRM) setBatchStage(STAGES.INPUT_READY);
         setFormReady(true);
-        setConfirmReady(stage === STAGES.INPUT_CONFIRM);
+        setConfirmReady(false);
         updateBatchPanel();
         recoverAutoActionIfDue();
         return;
