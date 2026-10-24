@@ -546,7 +546,7 @@
 
       if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
         toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
-        await sleep(500);
+        await sleep(RETRY_WAIT_MS);
         formPreparationRunning = false;
         return await prepareReportForm(true);
       }
@@ -554,7 +554,7 @@
       setBatchError(true);
       setFormReady(false);
       updateBatchPanel();
-      toast("申告フォームを準備できませんでした。\n「この物件を再実行」または「スキップ」を選んでください。", 6000);
+      scheduleReportRetry("申告フォーム準備","申告フォームを準備できませんでした");
       return false;
     } finally {
       advancedMetric("report-form", preparationStarted, {ready:isFormReady()});
@@ -1087,10 +1087,7 @@
       // 完了したら右上の進捗パネルを即座に消す。
       document.getElementById("tm-batch-status")?.remove();
 
-      // 自動/手動スキップを送信完了件数と区別して表示する。
-      const skips=GM_getValue(BATCH_SKIP_LOG_KEY, []);
-      const skipped=Array.isArray(skips)?skips.length:0;
-      toast(`✓ 一括処理が完了しました\n送信完了：${Math.max(0,total-skipped)}件 / スキップ：${skipped}件`, 6000);
+      showBatchIssueResults();
       return;
     }
 
@@ -1099,7 +1096,7 @@
     setSubmitting(false);
     setConfirmReady(false);
     setFormReady(false);
-    toast(`送信完了！\n次の物件へ進みます（${index + 1}/${urls.length}）`, 2000);
+    clearReportRetry();
     setTimeout(() => { location.href = urls[index]; }, 150);
   }
 
@@ -1142,14 +1139,11 @@
     );
 
     if (!confirmLink) {
-      setSubmitting(false);
-      setConfirmReady(false);
-      setBatchError(true);
-      updateBatchPanel();
-      toast("「内容確認」ボタンが見つかりません。\n入力エラーがないか確認してください。", 5000);
+      scheduleReportRetry("内容確認へ移動","内容確認ボタンがありません");
       return;
     }
 
+    clearReportRetry();
     confirmLink.click();
   }
 
@@ -1169,10 +1163,7 @@
     );
 
     if (!sendLink) {
-      setSubmitting(false);
-      setBatchError(true);
-      updateBatchPanel();
-      toast("最終送信ボタンが見つかりませんでした。\n確認画面を手動で確認してください。", 6000);
+      scheduleReportRetry("最終送信ボタン取得","SUUMOの確認画面で最終送信ボタンが見つかりません");
       return;
     }
 
@@ -1192,10 +1183,11 @@
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
+    clearReportRetry();
     setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
-    toast("申告の送信が完了しました ✓", 1800);
+    // 正常完了の通知は省略する。
     await sleep(100);
     goToNextListing();
   }
@@ -1237,13 +1229,13 @@
   }
 
   // 送信せず次へ。手動スキップと掲載終了時の自動スキップで共通化する。
-  function advancePastSkippedListing(reason) {
-    if(nextListingStarted || !isBatchActive() || isSubmitting())return false;
+  function advancePastSkippedListing(reason,uncertain=false) {
+    if(nextListingStarted || !isBatchActive() || (isSubmitting()&&!uncertain))return false;
     const urls=getBatchUrls(), index=getBatchIndex();
     if(!urls[index])return false;
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&!item)return false;
-    if(item&&item.status==="sending")return false;
+    if(item&&item.status==="sending"&&!uncertain)return false;
     nextListingStarted=true;
     cancelAutoAction(false);
     setConfirmReady(false);
@@ -1251,7 +1243,7 @@
     const log=Array.isArray(history)?history:[];
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
     GM_setValue(BATCH_SKIP_LOG_KEY,log);
-    saveIeloveExecutionStatus("skipped");
+    saveIeloveExecutionStatus(uncertain?"uncertain":"skipped");
     const execution=getIeloveExecution();
     if(execution?.items[index]?.url===urls[index]){
       execution.items[index].skipReason=String(reason||"スキップ");
@@ -1266,7 +1258,7 @@
       }
       clearBatch();
       document.getElementById("tm-batch-status")?.remove();
-      toast("✓ 一括処理が終了しました\n送信完了："+(urls.length-log.length)+"件 / スキップ："+log.length+"件",6000);
+      showBatchIssueResults();
       return true;
     }
     GM_setValue(BATCH_KEYS.index,next);
@@ -1275,7 +1267,8 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
-    toast("掲載 "+(index+1)+"件目をスキップ（"+reason+"）\n次の掲載 "+(next+1)+"/"+urls.length+"件目へ進みます",2600);
+    GM_deleteValue(REPORT_RETRY_KEY);
+    toast("掲載 "+(index+1)+"件目をスキップ（"+reason+"）\n次の掲載へ進みます",1600);
     location.href=urls[next];
     return true;
   }
@@ -1311,6 +1304,8 @@
     const displayedId=(location.pathname.match(/\/chintai\/bc_(\d+)/i)||[])[1];
     // 異なる掲載IDへ手動で移動した場合、別の掲載を誤ってスキップしない。
     if(!expectedId||(displayedId&&displayedId!==expectedId))return false;
+    recordIssue({phase:"申告",index:index+1,kind:"掲載終了",action:"自動スキップ",
+      detail:"SUUMO側の掲載終了案内を確認",attempts:0,url:expected});
     return advancePastSkippedListing("SUUMO掲載終了");
   }
 
@@ -1350,7 +1345,7 @@
       return;
     }
 
-    toast("申告リンクが見つかりませんでした。\n手動で申告リンクを押してください。", 6000);
+    scheduleReportRetry("掲載リンク取得","申告リンクが見つかりません（8秒待機後）");
   }
 
   function isListingPage() {
@@ -2956,14 +2951,10 @@
 
   function blockUncertainIeloveResend() {
     const item = currentIeloveExecutionItem();
-    if (!item || item.status !== "sending") return false;
+    if(!item||item.status!=="sending")return false;
+    if(isCompletePage()||confirmSendStarted)return true;
     cancelAutoAction(false);
-    setSubmitting(false);
-    setBatchError(true);
-    setFormReady(false);
-    updateBatchPanel();
-    toast("最終送信を開始済みです。送信結果を確認できるまで再送信しないでください。", 7500);
-    return true;
+    return advanceUncertainSubmission("最終送信を開始しましたが、完了画面を確認できません");
   }
 
   function startIeloveSuumoReporting() {
