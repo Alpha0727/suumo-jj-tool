@@ -73,6 +73,10 @@
 
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
   const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
+  const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
+  const REPORT_RETRY_KEY = "suumo_advanced_report_retry_v1";
+  const RETRY_WAIT_MS = 500;
+  const MAX_STAGE_ATTEMPTS = 3;
 
   const STAGES = Object.freeze({
     LISTING: "listing",
@@ -633,7 +637,11 @@
 
   function setBatch(urls, index = 0, source = "regular") {
     if (!requireProfileManager()) return false;
-    if (source !== "ielove") GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
+    if (source !== "ielove") {
+      GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
+      GM_setValue(ISSUE_LOG_KEY, []);
+    }
+    GM_deleteValue(REPORT_RETRY_KEY);
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -662,6 +670,7 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    GM_deleteValue(REPORT_RETRY_KEY);
   }
 
   function getPermanentExcludedCompanies() {
@@ -929,6 +938,129 @@
       overlay.remove();
       location.href = urls[0];
     };
+  }
+
+
+  // エラー診断だけを保存する。会社名・入力値・認証情報はログへ含めない。
+  function issueList(){
+    const rows=GM_getValue(ISSUE_LOG_KEY,[]);
+    return Array.isArray(rows)?rows:[];
+  }
+  function safeIssueDetail(value){
+    return String(value||"原因未特定").replace(/https?:\/\/[^\s　]+/gi,"[URL省略]")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,"[メール省略]")
+      .replace(/(?:\+81[- ]?|0\d{1,4}[- ]?)\d{2,4}[- ]?\d{3,4}/g,"[番号省略]").slice(0,400);
+  }
+  function publicListingUrl(value){
+    const m=String(value||"").match(/^https:\/\/suumo\.jp\/chintai\/bc_(\d+)\/?/i);
+    return m?"https://suumo.jp/chintai/bc_"+m[1]+"/":"";
+  }
+  function recordIssue({phase="申告",index=0,kind="処理エラー",action="スキップ",detail="",attempts=0,url=""}){
+    const id=String(phase)+":"+String(index);
+    const item={id,phase:String(phase),index:Number(index)||0,kind:String(kind),
+      action:String(action),detail:safeIssueDetail(detail),attempts:Number(attempts)||0,
+      url:publicListingUrl(url),at:new Date().toISOString(),version:SCRIPT_VERSION};
+    const rows=issueList().filter(row=>row.id!==id);
+    rows.push(item);
+    GM_setValue(ISSUE_LOG_KEY,rows.slice(-300));
+    console.warn("[SUUMO JJ 上位版] 問題記録",item);
+  }
+  function formatIssueReport(rows){
+    return ["【SUUMO JJ 上位版 エラー報告】","バージョン："+SCRIPT_VERSION,
+      "問題件数："+rows.length+"件","※管理会社名・入力値・認証情報は含みません。",
+      "※送信結果不明の掲載は自動再送信していません。",
+      ...rows.flatMap((item,i)=>[
+        "","━━━━━━━━━━━━━━━━","【問題 "+(i+1)+"】",
+        "工程："+item.phase,"対象："+item.index+"件目",
+        "種類："+item.kind,"対応："+item.action,
+        "試行回数："+item.attempts,"発生日時："+item.at,
+        ...(item.url?["掲載URL："+item.url]:[]),"詳細："+item.detail
+      ])].join("\n");
+  }
+  function openIssueResults(){
+    document.getElementById("tm-advanced-issue-results")?.remove();
+    const rows=issueList();
+    if(!rows.length)return false;
+    const overlay=document.createElement("div");
+    overlay.id="tm-advanced-issue-results";
+    overlay.style.cssText="position:fixed;inset:0;background:#0008;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:sans-serif";
+    const panel=document.createElement("section");
+    panel.style.cssText="background:white;color:#202735;border-radius:14px;padding:22px;width:650px;max-width:93vw;max-height:85vh;overflow:auto;box-shadow:0 10px 40px #0005";
+    const title=document.createElement("h2");
+    title.textContent="処理結果：問題のあった掲載 "+rows.length+"件";
+    title.style.cssText="font-size:19px;margin:0 0 10px";
+    panel.appendChild(title);
+    for(const [i,item] of rows.entries()){
+      const row=document.createElement("div");
+      row.style.cssText="border-top:1px solid #e1e5ec;padding:12px 0;font-size:13px;white-space:pre-line;overflow-wrap:anywhere";
+      row.textContent=(i+1)+". "+item.phase+" "+item.index+"件目｜"+item.kind+
+        "\n"+item.action+"｜試行 "+item.attempts+"回"+
+        (item.url?"\n"+item.url:"")+"\n"+item.detail;
+      panel.appendChild(row);
+    }
+    const actions=document.createElement("div");
+    actions.style.cssText="display:flex;gap:8px;margin-top:15px";
+    const copy=document.createElement("button");
+    copy.textContent="エラー内容をコピー";
+    copy.style.cssText="flex:1;padding:12px;color:white;background:#205375;border:0;border-radius:8px;font-weight:bold;cursor:pointer";
+    copy.onclick=async()=>{
+      const text=formatIssueReport(issueList());
+      try{
+        if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(text);
+        else{
+          const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);
+          ta.select();const ok=document.execCommand("copy");ta.remove();
+          if(!ok)throw new Error("コピー失敗");
+        }
+        copy.textContent="コピーしました ✓";
+      }catch(error){copy.textContent="コピーできませんでした";console.warn("コピー失敗",error);}
+    };
+    const close=document.createElement("button");
+    close.textContent="閉じる";
+    close.style.cssText="padding:12px 17px;border:1px solid #bcc5cf;border-radius:8px;background:#fff;cursor:pointer";
+    close.onclick=()=>overlay.remove();
+    actions.append(copy,close);panel.appendChild(actions);overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    return true;
+  }
+  function showBatchIssueResults(){
+    if(!openIssueResults())toast("一括処理が終了しました",2200);
+  }
+  function clearReportRetry(phase){
+    const state=GM_getValue(REPORT_RETRY_KEY,null);
+    if(!phase || state?.phase===phase)GM_deleteValue(REPORT_RETRY_KEY);
+  }
+  // 送信前だけ自動再試行する。確認結果が不明なPOSTは絶対に再送信しない。
+  function scheduleReportRetry(phase,message){
+    if(!isBatchActive()||nextListingStarted)return false;
+    const index=getBatchIndex(),url=getBatchUrls()[index],item=currentIeloveExecutionItem();
+    if(!url||(getIeloveExecution()&&!item)||item?.status==="sending")return false;
+    const prev=GM_getValue(REPORT_RETRY_KEY,null);
+    const same=prev?.index===index&&prev?.url===url&&prev?.phase===phase;
+    const attempts=(same?Number(prev.attempts)||0:0)+1;
+    if(attempts>=MAX_STAGE_ATTEMPTS){
+      recordIssue({phase:"申告："+phase,index:index+1,kind:"処理失敗",
+        action:"3回試行後スキップ",detail:message,attempts,url});
+      GM_deleteValue(REPORT_RETRY_KEY);
+      setSubmitting(false);setBatchError(false);setFormReady(false);
+      return advancePastSkippedListing("処理失敗："+phase);
+    }
+    GM_setValue(REPORT_RETRY_KEY,{index,url,phase,attempts});
+    setSubmitting(false);setConfirmReady(false);setBatchError(false);setFormReady(false);
+    setBatchStage(STAGES.LISTING);
+    toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
+    setTimeout(()=>{
+      if(!isBatchActive()||getBatchIndex()!==index||getBatchUrls()[index]!==url)return;
+      location.href=url;
+    },RETRY_WAIT_MS);
+    return true;
+  }
+  function advanceUncertainSubmission(detail){
+    const item=currentIeloveExecutionItem();
+    if(!item||item.status!=="sending"||nextListingStarted)return false;
+    recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
+      action:"要確認・自動再送信せず次へ",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
+    return advancePastSkippedListing("送信結果不明",true);
   }
 
   let nextListingStarted = false;
@@ -2188,6 +2320,7 @@
     });
     const handoff = { records:draft.records, searches:results, index:0, createdAt, token };
     GM_deleteValue("ielove_suumo_choices_v1");
+    GM_setValue(ISSUE_LOG_KEY, []);
     GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
     markAdvancedTiming("search-navigation-start");
     const tab = window.open(results[0].url, "_blank");
