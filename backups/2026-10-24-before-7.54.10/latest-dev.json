@@ -1,0 +1,5 @@
+{
+  "version": "7.54.9",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
+  "notes": "上位版：送信前の独自2段階確認（各1秒）を廃止し、300msの単一待機からSUUMO本来の確認画面へ移行。入力内容一致・送信状態・二重送信防止・SUUMO最終送信前250msは維持。画面復帰時も通常の最終送信ルートに統一。"
+}
