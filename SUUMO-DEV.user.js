@@ -496,9 +496,10 @@
 
     const attempts = Number(GM_getValue(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
     if (attempts >= FORM_PREP_MAX_ATTEMPTS) {
-      setBatchError(true);
-      setFormReady(false);
-      updateBatchPanel();
+      recordIssue({phase:"申告：フォーム準備",index:getBatchIndex()+1,kind:"フォーム取得・入力失敗",
+        action:"3回試行後スキップ",attempts,
+        detail:"フォーム準備の最大試行回数に到達",url:getBatchUrls()[getBatchIndex()]});
+      advancePastSkippedListing("申告フォーム準備失敗");
       return false;
     }
 
@@ -551,10 +552,12 @@
         return await prepareReportForm(true);
       }
 
-      setBatchError(true);
+      setBatchError(false);
       setFormReady(false);
-      updateBatchPanel();
-      scheduleReportRetry("申告フォーム準備","申告フォームを準備できませんでした");
+      recordIssue({phase:"申告：フォーム準備",index:getBatchIndex()+1,kind:"フォーム取得・入力失敗",
+        action:"3回試行後スキップ",attempts:used,
+        detail:String(error?.message||error),url:getBatchUrls()[getBatchIndex()]});
+      advancePastSkippedListing("申告フォーム準備失敗");
       return false;
     } finally {
       advancedMetric("report-form", preparationStarted, {ready:isFormReady()});
@@ -1235,10 +1238,16 @@
     if(!urls[index])return false;
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&!item)return false;
+    if(uncertain && item?.status!=="sending")return false;
     if(item&&item.status==="sending"&&!uncertain)return false;
     nextListingStarted=true;
     cancelAutoAction(false);
     setConfirmReady(false);
+    if(reason==="SUUMO掲載終了"){
+      recordIssue({phase:"申告：掲載確認",index:index+1,kind:"掲載終了",
+        action:"自動スキップ",attempts:1,detail:"SUUMOが掲載終了を明示",
+        url:urls[index]});
+    }
     const history=GM_getValue(BATCH_SKIP_LOG_KEY, []);
     const log=Array.isArray(history)?history:[];
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
