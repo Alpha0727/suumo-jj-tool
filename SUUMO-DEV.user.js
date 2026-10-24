@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.9
+// @version      7.54.10
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -72,6 +72,7 @@
   };
 
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
+  const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
 
   const STAGES = Object.freeze({
     LISTING: "listing",
@@ -123,7 +124,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.9";
+  const SCRIPT_VERSION = "7.54.10";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -639,6 +640,7 @@
     GM_setValue(BATCH_KEYS.urls, urls);
     GM_setValue(BATCH_KEYS.index, index);
     GM_setValue(BATCH_KEYS.active, true);
+    GM_setValue(BATCH_SKIP_LOG_KEY, []);
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
@@ -953,8 +955,10 @@
       // 完了したら右上の進捗パネルを即座に消す。
       document.getElementById("tm-batch-status")?.remove();
 
-      // ブラウザ標準alertではなく、上中央の大きい通知で完了を知らせる。
-      toast(`✓ 一括処理が完了しました\n送信完了：${total}件`, 6000);
+      // 自動/手動スキップを送信完了件数と区別して表示する。
+      const skips=GM_getValue(BATCH_SKIP_LOG_KEY, []);
+      const skipped=Array.isArray(skips)?skips.length:0;
+      toast(`✓ 一括処理が完了しました\n送信完了：${Math.max(0,total-skipped)}件 / スキップ：${skipped}件`, 6000);
       return;
     }
 
@@ -1100,42 +1104,84 @@
     }, 500);
   }
 
-  function skipBatchItem() {
-    if (currentIeloveExecutionItem()?.status === "sending") {
-      toast("送信結果が未確認のため、この掲載はスキップできません。確認後に中止してください。", 6500);
-      return;
-    }
-    if (isSubmitting()) {
-      toast("送信処理中はスキップできません");
-      return;
-    }
-
-    const urls = getBatchUrls();
-    let index = getBatchIndex();
-
-    const ok = confirm("この物件は送信せずにスキップしますか？");
-    if (!ok) return;
-
+  // 送信せず次へ。手動スキップと掲載終了時の自動スキップで共通化する。
+  function advancePastSkippedListing(reason) {
+    if(nextListingStarted || !isBatchActive() || isSubmitting())return false;
+    const urls=getBatchUrls(), index=getBatchIndex();
+    if(!urls[index])return false;
+    const item=currentIeloveExecutionItem();
+    if(getIeloveExecution()&&!item)return false;
+    if(item&&item.status==="sending")return false;
+    nextListingStarted=true;
+    cancelAutoAction(false);
     setConfirmReady(false);
+    const history=GM_getValue(BATCH_SKIP_LOG_KEY, []);
+    const log=Array.isArray(history)?history:[];
+    log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
+    GM_setValue(BATCH_SKIP_LOG_KEY,log);
     saveIeloveExecutionStatus("skipped");
-    index++;
-
-    if (index >= urls.length) {
-      const execution = getIeloveExecution();
-      if (execution) {
-        execution.finishedAt = Date.now();
-        GM_setValue(IELOVE_BATCH_EXECUTION_KEY, execution);
+    const execution=getIeloveExecution();
+    if(execution?.items[index]?.url===urls[index]){
+      execution.items[index].skipReason=String(reason||"スキップ");
+      GM_setValue(IELOVE_BATCH_EXECUTION_KEY,execution);
+    }
+    console.info("[SUUMO JJ 上位版] 掲載をスキップ",log[log.length-1]);
+    const next=index+1;
+    if(next>=urls.length){
+      if(execution){
+        execution.finishedAt=Date.now();
+        GM_setValue(IELOVE_BATCH_EXECUTION_KEY,execution);
       }
       clearBatch();
       document.getElementById("tm-batch-status")?.remove();
-      toast("✓ 一括処理が終了しました", 5000);
+      toast("✓ 一括処理が終了しました\n送信完了："+(urls.length-log.length)+"件 / スキップ："+log.length+"件",6000);
+      return true;
+    }
+    GM_setValue(BATCH_KEYS.index,next);
+    setBatchStage(STAGES.LISTING);
+    setSubmitting(false);
+    setBatchError(false);
+    setFormReady(false);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    toast("掲載 "+(index+1)+"件目をスキップ（"+reason+"）\n次の掲載 "+(next+1)+"/"+urls.length+"件目へ進みます",2600);
+    location.href=urls[next];
+    return true;
+  }
+
+  function skipBatchItem() {
+    if(currentIeloveExecutionItem()?.status==="sending"){
+      toast("送信結果が未確認のため、この掲載はスキップできません。確認後に中止してください。",6500);
       return;
     }
-
-    GM_setValue(BATCH_KEYS.index, index);
-    setBatchStage(STAGES.LISTING);
-    location.href = urls[index];
+    if(isSubmitting()){toast("送信処理中はスキップできません");return;}
+    if(!confirm("この物件は送信せずにスキップしますか？"))return;
+    advancePastSkippedListing("手動スキップ");
   }
+
+  // SUUMOの掲載終了ページを文言まで確認し、単なるリンク読込失敗と区別する。
+  function isConfirmedListingEndedPage(doc=document) {
+    const body=doc.body;
+    if(!body || body.querySelector("#js-bknToiawaseFr"))return false;
+    const text=String(body.innerText||body.textContent||"").normalize("NFKC").replace(/\s+/g,"");
+    return /お探しの情報は[、,]?当サイトへの掲載が終了したためご覧いただけません/.test(text) ||
+      /(?:この|該当の)(?:物件|お部屋|掲載情報)は?(?:すでに)?掲載(?:が)?終了(?:しました|しています)/.test(text);
+  }
+
+  function autoSkipEndedListingIfConfirmed() {
+    if(!isBatchActive()||getBatchStage()!==STAGES.LISTING||isSubmitting()||
+       isFormReady()||!isConfirmedListingEndedPage())return false;
+    const urls=getBatchUrls(), index=getBatchIndex(), expected=urls[index];
+    if(!expected)return false;
+    const item=currentIeloveExecutionItem();
+    if(getIeloveExecution()&&!item)return false;
+    if(item && item.status!=="pending")return false;
+    const expectedId=(expected.match(/\/chintai\/bc_(\d+)/i)||[])[1];
+    const displayedId=(location.pathname.match(/\/chintai\/bc_(\d+)/i)||[])[1];
+    // 異なる掲載IDへ手動で移動した場合、別の掲載を誤ってスキップしない。
+    if(!expectedId||(displayedId&&displayedId!==expectedId))return false;
+    return advancePastSkippedListing("SUUMO掲載終了");
+  }
+
 
   function stopBatch() {
     const ok = confirm("一括処理を中止しますか？\n\n進捗はリセットされます。");
@@ -1151,6 +1197,7 @@
       goToNextListing();
       return;
     }
+    if(autoSkipEndedListingIfConfirmed())return;
 
     const urls = getBatchUrls();
     const index = getBatchIndex();
@@ -1164,6 +1211,7 @@
 
     markAdvancedTiming("listing-page-ready");
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
+    if(autoSkipEndedListingIfConfirmed())return;
     if (link && isBatchActive() && isListingPage()) {
       markAdvancedTiming("listing-report-link-clicked");
       link.click();
@@ -2293,16 +2341,25 @@
     return record;
   }
 
-  // SUUMOの0件表示は「条件にあう物件がありません」等、複数表記に対応。
+  // 物件カードが存在せず、SUUMOが明示的に「0件」と表示する場合のみ空結果とする。
+  // 通信エラー・読み取り失敗・曖昧な空HTMLはスキップしない。
   function isConfirmedNoResultMessage(doc = document) {
-    if (doc === document && document.readyState !== "complete") return false;
-    if (doc.querySelector(".property-body")) return false;
+    if(doc===document && document.readyState!=="complete")return false;
+    if(doc.querySelector(".property-body,#js-bukkenList .js-property"))return false;
     const body=doc.body?.cloneNode(true);
     body?.querySelectorAll("script,style,template,noscript").forEach(el=>el.remove());
-    const text = doc === document ? (doc.body?.innerText || "") : (body?.textContent || "");
-    // 「不動産会社0件」は、賃貸物件0件とは限らない。
-    return /条件に(?:あう|合う|一致する)物件がありません|該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)|検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text);
+    const text=String(doc===document?(doc.body?.innerText||""):(body?.textContent||""))
+      .normalize("NFKC").replace(/\s+/g," ");
+    return /条件に(?:あう|合う|一致する)物件がありません/.test(text) ||
+      /該当する(?:物件|お部屋|検索結果).*(?:ありません|見つかりません)/.test(text) ||
+      /検索条件に一致する(?:物件|お部屋).*(?:ありません|見つかりません)/.test(text) ||
+      /(?:賃貸)?(?:物件)?検索結果\s*[:：]?\s*0\s*件/.test(text) ||
+      /検索結果が\s*(?:0\s*件|ありません|見つかりません)/.test(text) ||
+      /(?:物件|お部屋)(?:が|は)\s*見つかりません(?:でした)?/.test(text) ||
+      /該当する物件はありません/.test(text) ||
+      /(?:見つかった物件|ヒット件数)\s*[:：]?\s*0\s*件/.test(text);
   }
+
 
   // 築年月・丁目はSUUMOキーワード検索で建物を絞る。一覧で階数・面積・賃料を照合し、詳細ページは開かない。
   const IELOVE_FAST_ROOM_FILTER_VERSION = 'keyword-built-room-v1';
@@ -2467,7 +2524,18 @@
       const doc=reuse?document:new DOMParser().parseFromString(html,"text/html");
       metrics.parseMs+=performance.now()-parseStarted;
       const matchStarted=performance.now();
-      const cards=[...(doc.querySelector("#js-bukkenList")?.querySelectorAll(".js-property")||[])];
+      let cards=[...(doc.querySelector("#js-bukkenList")?.querySelectorAll(".js-property")||[])];
+      if(page===1&&!cards.length&&doc===document&&document.readyState!=="complete"){
+        await new Promise(resolve=>{
+          const done=()=>{document.removeEventListener("readystatechange",onReady);clearTimeout(timer);resolve();};
+          const onReady=()=>{if(document.readyState==="complete")done();};
+          const timer=setTimeout(done,8000);
+          document.addEventListener("readystatechange",onReady);
+          if(document.readyState==="complete")done();
+        });
+        assertCurrent();
+        cards=[...(doc.querySelector("#js-bukkenList")?.querySelectorAll(".js-property")||[])];
+      }
       if(page===1&&!cards.length) {
         if(isConfirmedNoResultMessage(doc)){advancedMetric("search-total",scanStarted,metrics);return [];}
         throw new Error("検索結果のカードが見つかりません");
@@ -2559,7 +2627,7 @@
       GM_setValue(IELOVE_SUUMO_CHOICES_KEY,latest);
       markAdvancedTiming("search-collect-complete",String(index+1)+"物件 / "+companies.length+"社");
       document.getElementById("tm-ielove-room-scan-progress")?.remove();
-      toast("住戸条件の照合完了："+(index+1)+"/"+handoff.records.length+"物件",1600);
+      toast(companies.length?"住戸条件の照合完了："+(index+1)+"/"+handoff.records.length+"物件":"検索結果0件・申告候補なし：自動スキップ "+(index+1)+"/"+handoff.records.length+"物件",1600);
       if(index<handoff.records.length-1)navigateIeloveSuumo(1);
       else openIeloveSuumoSelection();
     } catch(error) {
@@ -2971,6 +3039,10 @@
       await handleListingPage();
       return;
     }
+
+    // 掲載終了時にSUUMOがエラーページへ転送した場合も明示文言があれば次へ。
+    // リンク取得失敗や未知のページでは自動スキップしない。
+    if(getBatchStage()===STAGES.LISTING && autoSkipEndedListingIfConfirmed())return;
 
     if (isInputPage()) {
       if (isSubmitting()) {
