@@ -1039,7 +1039,7 @@
   function scheduleReportRetry(phase,message){
     if(!isBatchActive()||nextListingStarted)return false;
     const index=getBatchIndex(),url=getBatchUrls()[index],item=currentIeloveExecutionItem();
-    if(!url||(getIeloveExecution()&&!item)||item?.status==="sending")return false;
+    if(!url||(getIeloveExecution()&&!item)||item?.status==="sending"||currentUncertainSend())return false;
     const prev=GM_getValue(REPORT_RETRY_KEY,null);
     const same=prev?.index===index&&prev?.url===url&&prev?.phase===phase;
     const attempts=(same?Number(prev.attempts)||0:0)+1;
