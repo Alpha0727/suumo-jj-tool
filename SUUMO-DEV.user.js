@@ -76,7 +76,7 @@
   // this SUUMO tab. Full navigations and reloads retain sessionStorage, while
   // opening a fresh tab never inherits a closed tab's GM-backed queue history.
   // Cross-origin いえらぶ→SUUMO handoff/settings remain GM-backed as needed.
-  const TAB_RUNTIME_PREFIX = "suumo_codex_v803_runtime_";
+  const TAB_RUNTIME_PREFIX = "suumo_advanced_tab_runtime_v1_";
   function tabGet(key, fallback) {
     try {
       const value=sessionStorage.getItem(TAB_RUNTIME_PREFIX+key);
@@ -100,7 +100,7 @@
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
   const REPORT_RETRY_KEY = "suumo_advanced_report_retry_v1";
   const FINAL_SEND_GUARD_KEY = "suumo_advanced_final_send_guard_v1";
-  // Web Locks + same-origin durable claim: never depend on a non-atomic GM read/write as a mutex.
+  // Web Locks + tab-local claim: avoid duplicate final clicks within this active tab.
   const SEND_LOCK_NAME = "suumo-jj-advanced-final-send";
   const SEND_CLAIM_STORAGE_KEY = "suumo_jj_advanced_final_send_claim_v1";
   const UNKNOWN_SEND_TIMEOUT_MS = 60000;
@@ -1623,7 +1623,7 @@
         const marker={id:createBatchOwnerToken(),itemId:preTarget.itemId,
           ownerToken:preTarget.ownerToken,index:preTarget.index,
           url:preTarget.url,at:Date.now()};
-        // Persist the claim before the click. Lock serializes two tabs on same origin.
+        // Save the claim before the click, inside this tab only. Web Locks still serialize concurrent clicks.
         sessionStorage.setItem(SEND_CLAIM_STORAGE_KEY,JSON.stringify(marker));
         if(!saveTabContext(TAB_SENT_CONTEXT_KEY,marker)){
           // No click is ever issued if the tab-local send identity cannot be persisted.
@@ -3760,8 +3760,7 @@
 
     if (location.hostname !== "suumo.jp") return;
 
-    // Listen for a live owner even on tabs where the normal settings UI cannot
-    // initialize. Old owners without the responder still require user confirmation.
+    // Runtime progress belongs to this tab; no stale global-batch recovery UI.
     addMainButtons();
     if (!requireProfileManager()) return;
 
