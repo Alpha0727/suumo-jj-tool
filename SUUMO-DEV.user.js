@@ -2728,9 +2728,18 @@
     const owner=getIeloveHandoff();
     const assertCurrent=()=>{
       const latest=getIeloveHandoff();
-      if(!isAuthorizedIeloveBatchSearch(latest) || latest.token!==owner?.token ||
-        latest.index!==owner?.index || latest.searches[propertyIndex]?.url!==searchUrl || isAnyBatchActive()) {
-        throw new Error("取得中に対象物件または実行状態が変わったため停止しました");
+      let reason="";
+      if(!latest)reason="引き継ぎ情報が消去または不正になった";
+      else if(!isAuthorizedIeloveBatchSearch(latest))reason="検索タブのURL・起動識別子が一致しない";
+      else if(latest.token!==owner?.token)reason="別の一括検索が開始された";
+      else if(latest.index!==owner?.index)reason="対象物件番号が変更された";
+      else if(latest.searches[propertyIndex]?.url!==searchUrl)reason="検索条件が途中で変更された";
+      else if(isAnyBatchActive())reason="申告処理へ移行していた";
+      if(reason){
+        const error=new Error("取得中に対象物件または実行状態が変わったため停止しました");
+        error.scanStateChanged=true;
+        error.scanStateReason=reason;
+        throw error;
       }
     };
     assertCurrent();
@@ -2914,7 +2923,14 @@
           lastError=error;
           const message=String(error?.message||error);
           // 対象切替・申告バッチ開始など、状態が変わった場合には安全停止。
-          if(/取得中に対象物件または実行状態が変わった/.test(message))return;
+          if(error?.scanStateChanged || /取得中に対象物件または実行状態が変わった/.test(message)){
+            // Never auto-skip or retry a stale search. It may belong to a different batch.
+            console.warn("[SUUMO JJ 上位版] 検索を安全停止:",error?.scanStateReason||"状態不一致");
+            toast("検索の対象・実行状態が途中で切り替わりました。誤取得を防ぐため停止しました。"
+              +"\n原因候補："+(error?.scanStateReason||"状態不一致")
+              +"\n複数タブと上位版の重複起動を確認してください。",12000);
+            return;
+          }
           console.warn("[SUUMO JJ 上位版] 検索取得失敗",attempt+"/"+MAX_STAGE_ATTEMPTS,message);
           if(attempt===MAX_STAGE_ATTEMPTS||error?.scanNoRetry)break;
           showIeloveRoomScanProgress((index+1)+"件目：検索処理を再試行 "+(attempt+1)+"/3");
