@@ -529,7 +529,7 @@
       "kind": "browser",
       "status": "PASS",
       "metrics": {
-        "clickEvents": 3,
+        "clickEvents": 2,
         "navigations": 2
       }
     }
