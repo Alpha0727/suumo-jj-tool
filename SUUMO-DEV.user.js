@@ -522,32 +522,46 @@
     return false;
   }
 
-  // 固定待機ではなくDOMの要素出現を監視して即時再開。
+  // The form's dynamic DOM can mutate very often. Coalesce checks rather than
+  // scanning the document on every mutation, while retaining the safety timeout.
   function waitForReadyElement(selector, timeoutMs = 8000, predicate = null) {
     const ready = () => {
       const el = document.querySelector(selector);
       return el && (!predicate || predicate(el)) ? el : null;
     };
-    if (ready()) return Promise.resolve(ready());
+    const immediate = ready();
+    if (immediate) return Promise.resolve(immediate);
     return new Promise(resolve => {
       let done = false;
       let observer;
-      let timer;
+      let timeoutTimer;
+      let pendingCheckTimer = null;
       const finish = el => {
         if (done) return;
         done = true;
         observer.disconnect();
-        clearTimeout(timer);
+        clearTimeout(timeoutTimer);
+        if (pendingCheckTimer !== null) clearTimeout(pendingCheckTimer);
         resolve(el);
       };
-      observer = new MutationObserver(() => {
+      const inspect = () => {
+        pendingCheckTimer = null;
+        if (done) return;
         const el = ready();
         if (el) finish(el);
+      };
+      observer = new MutationObserver(() => {
+        // At most one DOM query per 30ms, even during intensive page updates.
+        if (done || pendingCheckTimer !== null) return;
+        pendingCheckTimer = setTimeout(inspect, 30);
       });
-      observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:["style","class","disabled"]});
-      timer = setTimeout(() => finish(null), timeoutMs);
-      const el = ready();
-      if (el) finish(el);
+      // Attribute changes are needed only for the visibility/editability predicate.
+      // The childList observer is retained for dynamically inserted form fields.
+      observer.observe(document.documentElement, predicate
+        ? {childList:true,subtree:true,attributes:true,attributeFilter:["style","class","disabled","hidden","readonly"]}
+        : {childList:true,subtree:true});
+      timeoutTimer = setTimeout(() => finish(null), timeoutMs);
+      inspect(); // Close the gap between the initial check and observer setup.
     });
   }
 
@@ -2118,7 +2132,7 @@
         </button>`;
     }
 
-    panel.innerHTML = `
+    const nextPanelMarkup = `
       <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">SUUMO 一括処理</div>
       <div style="font-size:27px;font-weight:bold;margin-bottom:6px;">${Math.min(index + 1, urls.length)} / ${urls.length}</div>
       ${ieloveItem ? `<div style="font-size:13px;font-weight:bold;margin-bottom:5px;">${escapeHtml(ieloveItem.name)} ／ ${escapeHtml(ieloveItem.profile.room)}</div>` : ""}
@@ -2130,6 +2144,14 @@
         <button id="tm-skip-item" ${submitting||uncertainSend ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting||uncertainSend ? "default" : "pointer"};">スキップ</button>
         <button id="tm-stop-batch" style="flex:1;padding:8px;cursor:pointer;">中止</button>
       </div>`;
+    // Preserve event handlers, the live countdown, and user focus when only
+    // periodic status reconciliation calls this function with unchanged data.
+    // Never skip batch checks above; only avoid reconstructing identical DOM.
+    if (panel.__suumoLastMarkup !== nextPanelMarkup ||
+        !panel.querySelector("#tm-stop-batch")) {
+      panel.innerHTML = nextPanelMarkup;
+      panel.__suumoLastMarkup = nextPanelMarkup;
+    }
 
     const submit = document.getElementById("tm-submit-next");
     if (submit) {
