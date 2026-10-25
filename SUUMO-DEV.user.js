@@ -168,6 +168,14 @@
   function isCurrentTabItem(){
     return matchesBatchIdentity(readTabContext(TAB_ITEM_CONTEXT_KEY));
   }
+  function primeCurrentTabItem(){
+    const current=currentBatchIdentity();
+    if(!current)return false;
+    const fresh={...current,id:createBatchOwnerToken(),boundAt:Date.now()};
+    if(!saveTabContext(TAB_ITEM_CONTEXT_KEY,fresh))return false;
+    try{sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);}catch(_){}
+    return true;
+  }
   function bindListingToTab(){
     if(!isListingPage())return false;
     const current=currentBatchIdentity();
@@ -175,12 +183,9 @@
     const from=String(location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
     const expected=String(current.url.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
     if(!from||from!==expected)return false;
-    const old=readTabContext(TAB_ITEM_CONTEXT_KEY);
-    if(matchesBatchIdentity(old))return true;
-    const fresh={...current,id:createBatchOwnerToken(),boundAt:Date.now()};
-    if(!saveTabContext(TAB_ITEM_CONTEXT_KEY,fresh))return false;
-    try{sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);}catch(_){}
-    return true;
+    if(isCurrentTabItem())return true;
+    // Only a matching listing URL can repair missing tab context. Stale form pages cannot.
+    return primeCurrentTabItem();
   }
   function isCurrentTabSent(){
     const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
@@ -731,6 +736,11 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    if(!primeCurrentTabItem()){
+      clearBatch();
+      toast("一括処理のタブ識別情報を保存できません。送信を開始しません。",8500);
+      return false;
+    }
     return true;
   }
 
@@ -1222,7 +1232,10 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
-    forgetTabContexts();
+    if(!primeCurrentTabItem()){
+      toast("次の掲載に進むためのタブ識別情報を保存できません。自動進行を停止しました。",8500);
+      return;
+    }
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
@@ -1490,7 +1503,10 @@
       return true;
     }
     GM_setValue(BATCH_KEYS.index,next);
-    forgetTabContexts();
+    if(!primeCurrentTabItem()){
+      toast("次の掲載の識別情報を保存できないため自動進行を停止しました。",8500);
+      return false;
+    }
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setBatchError(false);
