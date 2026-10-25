@@ -84,6 +84,7 @@
   const TAB_SENT_CONTEXT_KEY = "suumo_advanced_tab_sent_context_v1";
   const PAGE_HISTORY_STATE_KEY = "__suumoJjAdvancedPageContext";
   const PAGE_NAV_TICKET_KEY = "suumo_advanced_page_transition_v1";
+  const PAGE_ACTIVE_ENTRY_KEY = "suumo_advanced_active_history_entry_v1";
   const PAGE_TICKET_MAX_AGE_MS = 90000;
   const RETRY_WAIT_MS = 500;
   const MAX_STAGE_ATTEMPTS = 3;
@@ -154,6 +155,7 @@
       sessionStorage.removeItem(TAB_ITEM_CONTEXT_KEY);
       sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
       sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
+      sessionStorage.removeItem(PAGE_ACTIVE_ENTRY_KEY);
     }catch(_){}
   }
   function currentBatchIdentity(){
@@ -186,10 +188,12 @@
     try{
       if(pageStamp())return false; // Never overwrite an existing history entry.
       const base=history.state&&typeof history.state==="object"&&!Array.isArray(history.state)?history.state:{};
+      const entryId=createBatchOwnerToken();
       history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,entryId:createBatchOwnerToken()
+        kind,sendId,entryId
       }},"",location.href);
+      sessionStorage.setItem(PAGE_ACTIVE_ENTRY_KEY,entryId);
       return true;
     }catch(e){
       console.warn("[SUUMO JJ 上位版] 履歴識別情報の保存不可",e);
@@ -241,7 +245,10 @@
       if(!acceptPendingPageContext(kind))return false;
       stamp=pageStamp();
     }
-    return stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
+    let activeEntry="";
+    try{activeEntry=sessionStorage.getItem(PAGE_ACTIVE_ENTRY_KEY)||"";}catch(_){}
+    return !!activeEntry&&stamp?.entryId===activeEntry&&
+      stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
       stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
   }
   function primeCurrentTabItem(){
@@ -252,6 +259,7 @@
     try{
       sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
       sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
+      sessionStorage.removeItem(PAGE_ACTIVE_ENTRY_KEY);
     }catch(_){}
     return true;
   }
