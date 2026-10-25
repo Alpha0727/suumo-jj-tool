@@ -54,8 +54,8 @@ function setup(o={}) {
  return {api:ctx.api,nav,tickets,gets};
 }
 test("V8 source parses and is clearly versioned",()=>{
- assert.match(source,/\/\/ @version\s+8\.0/);
- assert.match(source,/const SCRIPT_VERSION = "8\.0"/);
+ assert.match(source,/\/\/ @version\s+8\.0\.1/);
+ assert.match(source,/const SCRIPT_VERSION = "8\.0\.1"/);
  new vm.Script(source);
 });
 test("Only source-listed and listing-ID-bound GET form links are accepted",()=>{
