@@ -4,7 +4,7 @@
 // @version      7.54.11
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
-// @match        https://cloud.ielove.jp/*
+// @match        https://cloud.ielove.jp/rent/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
 // @downloadURL  https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
 // @run-at       document-idle
@@ -82,6 +82,9 @@
   const UNKNOWN_SEND_TIMEOUT_MS = 60000;
   const TAB_ITEM_CONTEXT_KEY = "suumo_advanced_tab_item_context_v1";
   const TAB_SENT_CONTEXT_KEY = "suumo_advanced_tab_sent_context_v1";
+  const PAGE_HISTORY_STATE_KEY = "__suumoJjAdvancedPageContext";
+  const PAGE_NAV_TICKET_KEY = "suumo_advanced_page_transition_v1";
+  const PAGE_TICKET_MAX_AGE_MS = 90000;
   const RETRY_WAIT_MS = 500;
   const MAX_STAGE_ATTEMPTS = 3;
 
@@ -165,15 +168,90 @@
     return !!now&&!!ctx&&ctx.ownerToken===now.ownerToken&&
       ctx.index===now.index&&ctx.url===now.url&&!!ctx.id;
   }
+  function currentPageKind(){
+    if(/^\/chintai\/bc_/i.test(location.pathname))return "listing";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG001/"))return "input";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG002/"))return "confirm";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG003/"))return "complete";
+    // SUUMO may redirect a removed listing to a non-listing information page.
+    if(getBatchStage()===STAGES.LISTING && isConfirmedListingEndedPage())return "expired";
+    return "";
+  }
+  function pageStamp(){
+    const h=history.state;
+    return h&&typeof h==="object"&&!Array.isArray(h)?h[PAGE_HISTORY_STATE_KEY]||null:null;
+  }
+  function stampPageContext(ctx,kind,sendId=""){
+    try{
+      if(pageStamp())return false; // Never overwrite an existing history entry.
+      const base=history.state&&typeof history.state==="object"&&!Array.isArray(history.state)?history.state:{};
+      history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
+        ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
+        kind,sendId,entryId:createBatchOwnerToken()
+      }},"",location.href);
+      return true;
+    }catch(e){
+      console.warn("[SUUMO JJ 上位版] 履歴識別情報の保存不可",e);
+      return false;
+    }
+  }
+  function queuePageTransition(kind,sendId=""){
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    try{
+      sessionStorage.setItem(PAGE_NAV_TICKET_KEY,JSON.stringify({
+        ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
+        kind,sendId,at:Date.now()
+      }));
+      return true;
+    }catch(_){return false;}
+  }
+  function acceptPendingPageContext(kind){
+    if(pageStamp())return false;
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    let ticket=null;
+    try{ticket=JSON.parse(sessionStorage.getItem(PAGE_NAV_TICKET_KEY)||"null");}catch(_){}
+    if(!ticket)return false;
+    const age=Date.now()-Number(ticket.at);
+    if(age<0||age>PAGE_TICKET_MAX_AGE_MS)return false;
+    if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
+    if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
+       ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
+    if(kind==="complete"){
+      const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+      if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
+    }
+    const nav=performance.getEntriesByType?.("navigation")?.[0]?.type||"";
+    if(nav==="back_forward")return false;
+    if(!stampPageContext(ctx,kind,ticket.sendId||""))return false;
+    try{sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);}catch(_){}
+    return true;
+  }
   function isCurrentTabItem(){
-    return matchesBatchIdentity(readTabContext(TAB_ITEM_CONTEXT_KEY));
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    const kind=currentPageKind();
+    if(!kind)return false;
+    // Each history entry retains its own immutable item ID. Moving backward to an
+    // old page cannot borrow the currently active item ID from sessionStorage.
+    let stamp=pageStamp();
+    if(!stamp){
+      if(!acceptPendingPageContext(kind))return false;
+      stamp=pageStamp();
+    }
+    return stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
+      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
   }
   function primeCurrentTabItem(){
     const current=currentBatchIdentity();
     if(!current)return false;
     const fresh={...current,id:createBatchOwnerToken(),boundAt:Date.now()};
     if(!saveTabContext(TAB_ITEM_CONTEXT_KEY,fresh))return false;
-    try{sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);}catch(_){}
+    try{
+      sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
+      sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
+    }catch(_){}
     return true;
   }
   function bindListingToTab(){
@@ -183,15 +261,15 @@
     const from=String(location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
     const expected=String(current.url.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
     if(!from||from!==expected)return false;
-    if(isCurrentTabItem())return true;
-    // Only a matching listing URL can repair missing tab context. Stale form pages cannot.
-    return primeCurrentTabItem();
+    return isCurrentTabItem(); // Never adopt an untagged or stale listing without a ticket.
   }
+
   function isCurrentTabSent(){
     const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
     const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
     return isCurrentTabItem()&&ctx?.itemId===item?.id&&
-      ctx?.id&&ctx.id===guard?.id&&ctx.index===guard.index&&
+      ctx?.id&&ctx.id===guard?.id&&pageStamp()?.sendId===ctx.id&&
+      pageStamp()?.kind==="complete"&&ctx.index===guard.index&&
       ctx.url===guard.url&&ctx.ownerToken===guard.ownerToken&&
       guard.status==="sending";
   }
@@ -736,7 +814,7 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
-    if(!primeCurrentTabItem()){
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       clearBatch();
       toast("一括処理のタブ識別情報を保存できません。送信を開始しません。",8500);
       return false;
@@ -1183,6 +1261,7 @@
     toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
     setTimeout(()=>{
       if(!isBatchActive()||getBatchIndex()!==index||getBatchUrls()[index]!==url)return;
+      if(!queuePageTransition("listing"))return;
       location.href=url;
     },RETRY_WAIT_MS);
     return true;
@@ -1232,7 +1311,7 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
-    if(!primeCurrentTabItem()){
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       toast("次の掲載に進むためのタブ識別情報を保存できません。自動進行を停止しました。",8500);
       return;
     }
@@ -1289,6 +1368,7 @@
     }
 
     clearReportRetry("内容確認へ移動");
+    if(!queuePageTransition("confirm"))return rejectStaleTabPage();
     confirmLink.click();
   }
 
@@ -1393,6 +1473,10 @@
         saveIeloveExecutionStatus("sending");
         markAdvancedTiming("final-send-clicked");
         startBackgroundWatchdog();
+        if(!queuePageTransition("complete",marker.id)){
+          reportSendLockUnavailable();
+          return;
+        }
         sendLink.click();
       });
     }catch(error){
@@ -1453,6 +1537,7 @@
 
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
+    if(!queuePageTransition("listing"))return rejectStaleTabPage();
     setTimeout(() => {
       location.href = currentUrl;
     }, 500);
@@ -1503,7 +1588,7 @@
       return true;
     }
     GM_setValue(BATCH_KEYS.index,next);
-    if(!primeCurrentTabItem()){
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       toast("次の掲載の識別情報を保存できないため自動進行を停止しました。",8500);
       return false;
     }
@@ -1583,7 +1668,8 @@
     markAdvancedTiming("listing-page-ready");
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
     if(autoSkipEndedListingIfConfirmed())return;
-    if (link && isBatchActive() && isListingPage()) {
+    if (link && isBatchActive() && isListingPage() && isCurrentTabItem()) {
+      if(!queuePageTransition("input"))return rejectStaleTabPage();
       markAdvancedTiming("listing-report-link-clicked");
       link.click();
       return;
@@ -3453,6 +3539,7 @@
     // ここで保存した値は同じTampermonkeyスクリプトの保存領域を使うため、
     // SUUMO側の申告フォームでもそのまま利用できる。
     if (location.hostname === "cloud.ielove.jp") {
+      if (!/^\/rent(?:\/|$)/.test(location.pathname)) return;
       addIeloveSettingsButton();
       requireProfileManager();
       return;
