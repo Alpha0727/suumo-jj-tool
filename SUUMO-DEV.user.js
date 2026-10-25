@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      7.54.10
+// @version      8.0.1
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
-// @match        https://cloud.ielove.jp/*
+// @match        https://cloud.ielove.jp/rent
+// @match        https://cloud.ielove.jp/rent/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
 // @downloadURL  https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
 // @run-at       document-idle
@@ -76,6 +77,17 @@
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
   const REPORT_RETRY_KEY = "suumo_advanced_report_retry_v1";
   const FINAL_SEND_GUARD_KEY = "suumo_advanced_final_send_guard_v1";
+  // Web Locks + same-origin durable claim: never depend on a non-atomic GM read/write as a mutex.
+  const SEND_LOCK_NAME = "suumo-jj-advanced-final-send";
+  const SEND_CLAIM_STORAGE_KEY = "suumo_jj_advanced_final_send_claim_v1";
+  const UNKNOWN_SEND_TIMEOUT_MS = 60000;
+  const TAB_ITEM_CONTEXT_KEY = "suumo_advanced_tab_item_context_v1";
+  const TAB_SENT_CONTEXT_KEY = "suumo_advanced_tab_sent_context_v1";
+  const TAB_UNCERTAIN_SEND_KEY = "suumo_advanced_unresolved_send_tab_v1";
+  const PAGE_HISTORY_STATE_KEY = "__suumoJjAdvancedPageContext";
+  const PAGE_NAV_TICKET_KEY = "suumo_advanced_page_transition_v1";
+  const PAGE_ACTIVE_ENTRY_KEY = "suumo_advanced_active_history_entry_v1";
+  const PAGE_TICKET_MAX_AGE_MS = 90000;
   const RETRY_WAIT_MS = 500;
   const MAX_STAGE_ATTEMPTS = 3;
 
@@ -86,7 +98,8 @@
     INPUT_CONFIRM: "input-confirm",
     SUBMITTING_CONFIRM: "submitting-confirm",
     SUBMITTING_FINAL: "submitting-final",
-    COMPLETE: "complete"
+    COMPLETE: "complete",
+    SEND_UNCERTAIN: "send-uncertain"
   });
 
   function getBatchStage() {
@@ -128,8 +141,173 @@
     return !!ownerToken && !!tabToken && ownerToken === tabToken;
   }
 
+  // The batch's shared index is NOT proof of which listing created this tab's page.
+  // Only the matching listing URL may establish a tab-local item context.
+  // It then survives listing -> form -> confirmation -> completion via sessionStorage.
+  function readTabContext(key){
+    try{return JSON.parse(sessionStorage.getItem(key)||"null");}catch(_){return null;}
+  }
+  function saveTabContext(key,value){
+    try{
+      sessionStorage.setItem(key,JSON.stringify(value));
+      return true;
+    }catch(_){return false;}
+  }
+  function forgetTabContexts(){
+    try{
+      sessionStorage.removeItem(TAB_ITEM_CONTEXT_KEY);
+      sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
+      sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
+      sessionStorage.removeItem(PAGE_ACTIVE_ENTRY_KEY);
+    }catch(_){}
+  }
+  function currentBatchIdentity(){
+    if(!isBatchOwnerTab() || !GM_getValue(BATCH_KEYS.active,false))return null;
+    const index=Number(GM_getValue(BATCH_KEYS.index,0))||0;
+    const urls=GM_getValue(BATCH_KEYS.urls,[]);
+    const ownerToken=GM_getValue(BATCH_KEYS.ownerToken,"");
+    const url=Array.isArray(urls)?urls[index]:null;
+    return url&&ownerToken?{ownerToken,index,url}:null;
+  }
+  function matchesBatchIdentity(ctx){
+    const now=currentBatchIdentity();
+    return !!now&&!!ctx&&ctx.ownerToken===now.ownerToken&&
+      ctx.index===now.index&&ctx.url===now.url&&!!ctx.id;
+  }
+  // Delayed navigation belongs to the batch, item and document that scheduled it.
+  function captureBatchTask(){
+    const identity=currentBatchIdentity(),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    return identity&&item?{...identity,itemId:item.id,pageUrl:location.href,entryId:pageStamp()?.entryId||""}:null;
+  }
+  function batchTaskStillCurrent(task){
+    const identity=currentBatchIdentity(),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    return !!task&&!!identity&&task.ownerToken===identity.ownerToken&&
+      task.index===identity.index&&task.url===identity.url&&task.itemId===item?.id&&
+      task.pageUrl===location.href&&task.entryId===(pageStamp()?.entryId||"");
+  }
+  function currentPageKind(){
+    if(/^\/chintai\/bc_/i.test(location.pathname))return "listing";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG001/"))return "input";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG002/"))return "confirm";
+    if(location.pathname.includes("/jj/chintai/shiryou/FR400FG003/"))return "complete";
+    // SUUMO may redirect a removed listing to a non-listing information page.
+    if(getBatchStage()===STAGES.LISTING && isConfirmedListingEndedPage())return "expired";
+    return "";
+  }
+  function pageStamp(){
+    const h=history.state;
+    return h&&typeof h==="object"&&!Array.isArray(h)?h[PAGE_HISTORY_STATE_KEY]||null:null;
+  }
+  function stampPageContext(ctx,kind,sendId=""){
+    try{
+      if(pageStamp())return false; // Never overwrite an existing history entry.
+      const base=history.state&&typeof history.state==="object"&&!Array.isArray(history.state)?history.state:{};
+      const entryId=createBatchOwnerToken();
+      history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
+        ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
+        kind,sendId,entryId
+      }},"",location.href);
+      sessionStorage.setItem(PAGE_ACTIVE_ENTRY_KEY,entryId);
+      return true;
+    }catch(e){
+      console.warn("[SUUMO JJ 上位版] 履歴識別情報の保存不可",e);
+      return false;
+    }
+  }
+  function queuePageTransition(kind,sendId=""){
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    try{
+      sessionStorage.setItem(PAGE_NAV_TICKET_KEY,JSON.stringify({
+        ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
+        kind,sendId,at:Date.now()
+      }));
+      return true;
+    }catch(_){return false;}
+  }
+  function acceptPendingPageContext(kind){
+    if(pageStamp())return false;
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    let ticket=null;
+    try{ticket=JSON.parse(sessionStorage.getItem(PAGE_NAV_TICKET_KEY)||"null");}catch(_){}
+    if(!ticket)return false;
+    const age=Date.now()-Number(ticket.at);
+    // An unresolved POST may finish after the ordinary navigation-ticket TTL.
+    // Its exact persisted send ID is still required below and by isCurrentTabSent().
+    if(!Number.isFinite(age)||age<0||(kind!=="complete"&&age>PAGE_TICKET_MAX_AGE_MS))return false;
+    if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
+    if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
+       ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
+    if(kind==="complete"){
+      const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+      if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
+    }
+    const nav=performance.getEntriesByType?.("navigation")?.[0]?.type||"";
+    if(nav==="back_forward")return false;
+    if(!stampPageContext(ctx,kind,ticket.sendId||""))return false;
+    try{sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);}catch(_){}
+    return true;
+  }
+  function isCurrentTabItem(){
+    const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!matchesBatchIdentity(ctx))return false;
+    const kind=currentPageKind();
+    if(!kind)return false;
+    // Each history entry retains its own immutable item ID. Moving backward to an
+    // old page cannot borrow the currently active item ID from sessionStorage.
+    let stamp=pageStamp();
+    if(!stamp){
+      if(!acceptPendingPageContext(kind))return false;
+      stamp=pageStamp();
+    }
+    let activeEntry="";
+    try{activeEntry=sessionStorage.getItem(PAGE_ACTIVE_ENTRY_KEY)||"";}catch(_){}
+    return !!activeEntry&&stamp?.entryId===activeEntry&&
+      stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
+      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
+  }
+  function primeCurrentTabItem(){
+    const current=currentBatchIdentity();
+    if(!current)return false;
+    const fresh={...current,id:createBatchOwnerToken(),boundAt:Date.now()};
+    if(!saveTabContext(TAB_ITEM_CONTEXT_KEY,fresh))return false;
+    try{
+      sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
+      sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
+      sessionStorage.removeItem(PAGE_ACTIVE_ENTRY_KEY);
+    }catch(_){}
+    return true;
+  }
+  function bindListingToTab(){
+    if(!isListingPage())return false;
+    const current=currentBatchIdentity();
+    if(!current)return false;
+    const from=String(location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+    const expected=String(current.url.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+    if(!from||from!==expected)return false;
+    return isCurrentTabItem(); // Never adopt an untagged or stale listing without a ticket.
+  }
+
+  function isCurrentTabSent(){
+    const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    return isCurrentTabItem()&&ctx?.itemId===item?.id&&
+      ctx?.id&&ctx.id===guard?.id&&
+      (pageStamp()?.kind!=="complete"||pageStamp()?.sendId===ctx.id)&&
+      ctx.index===guard.index&&
+      ctx.url===guard.url&&ctx.ownerToken===guard.ownerToken&&
+      guard.status==="sending";
+  }
+  function rejectStaleTabPage(){
+    // Never touch shared status or index from an older tab.
+    toast("安全停止：この画面は現在処理中の掲載と対応していません。元の一括処理タブで確認してください。",9000);
+    console.warn("[SUUMO JJ 上位版] 古い画面の実行を拒否",location.pathname);
+    return false;
+  }
+
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "7.54.10";
+  const SCRIPT_VERSION = "8.0.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -344,32 +522,46 @@
     return false;
   }
 
-  // 固定待機ではなくDOMの要素出現を監視して即時再開。
+  // The form's dynamic DOM can mutate very often. Coalesce checks rather than
+  // scanning the document on every mutation, while retaining the safety timeout.
   function waitForReadyElement(selector, timeoutMs = 8000, predicate = null) {
     const ready = () => {
       const el = document.querySelector(selector);
       return el && (!predicate || predicate(el)) ? el : null;
     };
-    if (ready()) return Promise.resolve(ready());
+    const immediate = ready();
+    if (immediate) return Promise.resolve(immediate);
     return new Promise(resolve => {
       let done = false;
       let observer;
-      let timer;
+      let timeoutTimer;
+      let pendingCheckTimer = null;
       const finish = el => {
         if (done) return;
         done = true;
         observer.disconnect();
-        clearTimeout(timer);
+        clearTimeout(timeoutTimer);
+        if (pendingCheckTimer !== null) clearTimeout(pendingCheckTimer);
         resolve(el);
       };
-      observer = new MutationObserver(() => {
+      const inspect = () => {
+        pendingCheckTimer = null;
+        if (done) return;
         const el = ready();
         if (el) finish(el);
+      };
+      observer = new MutationObserver(() => {
+        // At most one DOM query per 30ms, even during intensive page updates.
+        if (done || pendingCheckTimer !== null) return;
+        pendingCheckTimer = setTimeout(inspect, 30);
       });
-      observer.observe(document.documentElement, {childList:true,subtree:true,attributes:true,attributeFilter:["style","class","disabled"]});
-      timer = setTimeout(() => finish(null), timeoutMs);
-      const el = ready();
-      if (el) finish(el);
+      // Attribute changes are needed only for the visibility/editability predicate.
+      // The childList observer is retained for dynamically inserted form fields.
+      observer.observe(document.documentElement, predicate
+        ? {childList:true,subtree:true,attributes:true,attributeFilter:["style","class","disabled","hidden","readonly"]}
+        : {childList:true,subtree:true});
+      timeoutTimer = setTimeout(() => finish(null), timeoutMs);
+      inspect(); // Close the gap between the initial check and observer setup.
     });
   }
 
@@ -490,6 +682,7 @@
 
   async function prepareReportForm(forceRetry = false) {
     if (!isBatchActive() || !isInputPage()) return false;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (!requireProfileManager()) return false;
     if (formPreparationRunning) return false;
     if (isFormReady()) return true;
@@ -640,6 +833,15 @@
   }
 
   function setBatch(urls, index = 0, source = "regular") {
+    // A previous POST can still navigate this tab after a timeout.
+    // Quarantine this browser tab even if the operator stopped the old batch.
+    let sameTabHasUnresolvedPost=true;
+    try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
+    const unresolvedPost=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
+      toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
+      return false;
+    }
     if (!requireProfileManager()) return false;
     if (source !== "ielove") {
       GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
@@ -647,6 +849,8 @@
     }
     GM_deleteValue(REPORT_RETRY_KEY);
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    forgetTabContexts();
+    try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -660,6 +864,11 @@
     setBatchError(false);
     setFormReady(false);
     GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
+      clearBatch();
+      toast("一括処理のタブ識別情報を保存できません。送信を開始しません。",8500);
+      return false;
+    }
     return true;
   }
 
@@ -670,6 +879,8 @@
     GM_deleteValue(BATCH_KEYS.ownerToken);
     GM_deleteValue(BATCH_KEYS.stage);
     clearTabOwnerToken();
+    forgetTabContexts();
+    try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
@@ -951,11 +1162,26 @@
     const rows=GM_getValue(ISSUE_LOG_KEY,[]);
     return Array.isArray(rows)?rows:[];
   }
+  // Shared report only accepts generic diagnoses, never raw exception values/PII/tokens.
   function safeIssueDetail(value){
-    return String(value||"原因未特定").replace(/https?:\/\/[^\s　]+/gi,"[URL省略]")
-      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,"[メール省略]")
-      .replace(/(?:\+81[- ]?|0\d{1,4}[- ]?)\d{2,4}[- ]?\d{3,4}/g,"[番号省略]").slice(0,400);
+    const msg=String(value||"");
+    const http=msg.match(/\bHTTP\s+(40[0-9]|42[0-9]|5[0-9]{2})\b/);
+    if(http)return "SUUMOページ取得時にHTTP "+http[1]+"が発生しました";
+    if(/掲載終了|掲載が終了/.test(msg))return "SUUMO上で掲載終了を確認しました";
+    if(/(?:検索結果|賃貸).*0件|物件がありません/.test(msg))return "検索結果の掲載件数が0件でした";
+    if(/住戸条件|一致する掲載/.test(msg))return "指定した住戸条件に一致する掲載がありません";
+    if(/最終送信ボタン|送信ボタン/.test(msg))return "SUUMOの最終送信ボタンを取得できませんでした";
+    if(/最終送信|送信後|送信結果|完了画面/.test(msg))return "送信結果を確認できませんでした（自動再送信なし）";
+    if(/入力結果|管理会社情報|プロファイル|必要項目/.test(msg))return "フォーム入力値と必要項目の照合に失敗しました";
+    if(/確認画面|内容確認/.test(msg))return "SUUMOの内容確認画面に進めませんでした";
+    if(/申告フォーム|DOM待機|フォーム準備/.test(msg))return "申告フォームの読込・準備に失敗しました";
+    if(/申告リンク|掲載リンク/.test(msg))return "掲載ページから申告リンクを取得できませんでした";
+    if(/タイムアウト|timeout|AbortError/i.test(msg))return "画面・通信の待機時間を超過しました";
+    if(/通信|network|fetch|接続|読み込|取得|HTML/i.test(msg))return "ページ・通信の取得に失敗しました";
+    // Any unknown text could be a name, room, tenant or credential.
+    return "詳細は共有用ログから省略しました（元の診断は端末のコンソールで確認）";
   }
+
   function publicListingUrl(value){
     const m=String(value||"").match(/^https:\/\/suumo\.jp\/chintai\/bc_(\d+)\/?/i);
     return m?"https://suumo.jp/chintai/bc_"+m[1]+"/":"";
@@ -970,16 +1196,44 @@
     GM_setValue(ISSUE_LOG_KEY,rows.slice(-300));
     console.warn("[SUUMO JJ 上位版] 問題記録",item);
   }
+  function safeIssuePhase(value){
+    const v=String(value||"");
+    if(v==="検索"||v==="最終送信"||v==="申告")return v;
+    return /^申告：(掲載確認|フォーム準備|内容確認へ移動|掲載リンク取得|最終送信ボタン取得)$/.test(v)?v:"申告";
+  }
+  function safeIssueCategory(value){
+    const known=["検索結果0件","住戸条件一致0件・掲載会社0件","検索・会社情報取得失敗",
+      "処理失敗","フォーム取得・入力失敗","送信結果不明","掲載終了",
+      "送信安全機構の使用不可"];
+    return known.includes(String(value))?String(value):"処理エラー";
+  }
+  function safeIssueAction(value){
+    const known=["即時自動スキップ","再検索せず自動スキップ","最大3回試行後スキップ",
+      "3回試行後スキップ","自動スキップ","要確認・自動再送信せず次へ",
+      "自動送信停止・要確認","結果確認まで自動進行停止","スキップ","要確認"];
+    return known.includes(String(value))?String(value):"要確認";
+  }
+  function validIssueDate(value){
+    // Strict ISO UTC input only; never copy arbitrary suffixes from old logs.
+    const v=String(value||"");
+    if(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v))return "日時不明";
+    const parsed=new Date(v);
+    return Number.isFinite(parsed.getTime())&&parsed.toISOString()===v?v:"日時不明";
+  }
   function formatIssueReport(rows){
     return ["【SUUMO JJ 上位版 エラー報告】","バージョン："+SCRIPT_VERSION,
-      "問題件数："+rows.length+"件","※管理会社名・入力値・認証情報は含みません。",
+      "問題件数："+rows.length+"件","※詳細欄は固定の診断文のみ。任意の入力値や認証情報は含みません。",
       "※送信結果不明の掲載は自動再送信していません。",
       ...rows.flatMap((item,i)=>[
         "","━━━━━━━━━━━━━━━━","【問題 "+(i+1)+"】",
-        "工程："+item.phase,"対象："+item.index+"件目",
-        "種類："+item.kind,"対応："+item.action,
-        "試行回数："+item.attempts,"発生日時："+item.at,
-        ...(item.url?["掲載URL："+item.url]:[]),"詳細："+item.detail
+        "工程："+safeIssuePhase(item.phase),
+        "対象："+(Math.max(0,Number(item.index)||0))+"件目",
+        "種類："+(safeIssueCategory(item.kind)||"処理エラー"),
+        "対応："+(safeIssueAction(item.action)||"要確認"),
+        "試行回数："+(Math.max(0,Number(item.attempts)||0)),
+        "発生日時："+(validIssueDate(item.at)),
+        ...(publicListingUrl(item.url)?["掲載URL："+publicListingUrl(item.url)]:[]),
+        "詳細："+safeIssueDetail(item.detail)
       ])].join("\n");
   }
   function openIssueResults(){
@@ -998,9 +1252,9 @@
     for(const [i,item] of rows.entries()){
       const row=document.createElement("div");
       row.style.cssText="border-top:1px solid #e1e5ec;padding:12px 0;font-size:13px;white-space:pre-line;overflow-wrap:anywhere";
-      row.textContent=(i+1)+". "+item.phase+" "+item.index+"件目｜"+item.kind+
-        "\n"+item.action+"｜試行 "+item.attempts+"回"+
-        (item.url?"\n"+item.url:"")+"\n"+item.detail;
+      row.textContent=(i+1)+". "+safeIssuePhase(item.phase)+" "+Number(item.index)+"件目｜"+safeIssueCategory(item.kind)+
+        "\n"+safeIssueAction(item.action)+"｜試行 "+(Math.max(0,Number(item.attempts)||0))+"回"+
+        (publicListingUrl(item.url)?"\n"+publicListingUrl(item.url):"")+"\n"+safeIssueDetail(item.detail);
       panel.appendChild(row);
     }
     const actions=document.createElement("div");
@@ -1033,11 +1287,13 @@
   }
   function clearReportRetry(phase){
     const state=GM_getValue(REPORT_RETRY_KEY,null);
-    if(!phase || state?.phase===phase)GM_deleteValue(REPORT_RETRY_KEY);
+    if(phase && state?.phase===phase)GM_deleteValue(REPORT_RETRY_KEY);
+    // Phase is required. Clear all retries only after the listing is definitively complete,
+    // skipped, or a brand-new batch starts.
   }
   // 送信前だけ自動再試行する。確認結果が不明なPOSTは絶対に再送信しない。
   function scheduleReportRetry(phase,message){
-    if(!isBatchActive()||nextListingStarted)return false;
+    if(!isBatchActive()||!isCurrentTabItem()||nextListingStarted)return false;
     const index=getBatchIndex(),url=getBatchUrls()[index],item=currentIeloveExecutionItem();
     if(!url||(getIeloveExecution()&&!item)||item?.status==="sending"||currentUncertainSend())return false;
     const prev=GM_getValue(REPORT_RETRY_KEY,null);
@@ -1054,8 +1310,10 @@
     setSubmitting(false);setConfirmReady(false);setBatchError(false);setFormReady(false);
     setBatchStage(STAGES.LISTING);
     toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
+    const task=captureBatchTask();
     setTimeout(()=>{
-      if(!isBatchActive()||getBatchIndex()!==index||getBatchUrls()[index]!==url)return;
+      if(!batchTaskStillCurrent(task))return;
+      if(!queuePageTransition("listing"))return;
       location.href=url;
     },RETRY_WAIT_MS);
     return true;
@@ -1065,20 +1323,108 @@
     const record=GM_getValue(FINAL_SEND_GUARD_KEY,null),index=getBatchIndex();
     return record?.status==="sending"&&record.index===index&&record.url===getBatchUrls()[index];
   }
+  // A timed-out POST is not a failed POST. Never send a second listing in this
+  // tab while a delayed completion from the first could still arrive.
   function advanceUncertainSubmission(detail){
+    if(!isCurrentTabSent()||getBatchStage()===STAGES.SEND_UNCERTAIN)return false;
     const item=currentIeloveExecutionItem();
     if((item?.status!=="sending"&&!currentUncertainSend())||nextListingStarted)return false;
     recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
-      action:"要確認・自動再送信せず次へ",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
-    return advancePastSkippedListing("送信結果不明",true);
+      action:"結果確認まで自動進行停止",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
+    // Do not let a later batch reuse this same tab while the old POST may finish.
+    try{sessionStorage.setItem(TAB_UNCERTAIN_SEND_KEY,"1");}catch(_){}
+    setBatchStage(STAGES.SEND_UNCERTAIN);
+    setSubmitting(false);
+    setConfirmReady(false);
+    setBatchError(true);
+    cancelAutoAction(false);
+    saveIeloveExecutionStatus("uncertain");
+    updateBatchPanel();
+    toast("安全停止：最終送信の結果が確認できません。\n前の物件の完了画面を次の物件と誤認しないため、一括処理を停止しています。\n二重送信を避け、SUUMOの受信状況を確認してください。",11000);
+    return true;
+  }
+
+  // Ver.8.0: only skip the visual LISTING document when its actual link proves
+  // a same-origin, listing-specific GET form URL. Never synthesize a form URL.
+  // The first displayed listing is used as a capability probe; unsupported SUUMO
+  // link layouts keep the exact legacy navigation path without an extra fetch.
+  const FAST_REPORT_NAV_KEY = "suumo_advanced_fast_report_navigation_v8";
+  function directReportInputUrlFromListingDoc(doc, listingUrl) {
+    try {
+      const listing = new URL(listingUrl, location.origin);
+      const match = listing.pathname.match(/^\/chintai\/bc_(\d+)\/?$/i);
+      if (listing.origin !== location.origin || !match) return null;
+      const link = doc.querySelector("#js-bknToiawaseFr");
+      if (!link || String(link.tagName).toUpperCase() !== "A" ||
+          link.hasAttribute("onclick") || link.hasAttribute("target")) return null;
+      const raw = String(link.getAttribute("href") || "").trim();
+      if (!raw || raw.startsWith("#") || /^javascript:/i.test(raw)) return null;
+      const input = new URL(raw, listing.href);
+      if (input.origin !== listing.origin ||
+          input.pathname !== "/jj/chintai/shiryou/FR400FG001/" ||
+          input.username || input.password || input.hash) return null;
+      // The link must explicitly identify the listing; a generic form GET might
+      // depend on the current browser history or SUUMO's page JavaScript.
+      const idPattern = new RegExp("(^|\\D)" + match[1] + "(\\D|$)");
+      if (![...input.searchParams.values()].some(v => idPattern.test(v))) return null;
+      return input.href;
+    } catch (_) {
+      return null;
+    }
+  }
+  async function navigateNextListingWithoutDisplay(task, listingUrl) {
+    if (!batchTaskStillCurrent(task)) return;
+    let supported = false;
+    try { supported = sessionStorage.getItem(FAST_REPORT_NAV_KEY) === "1"; } catch (_) {}
+    if (supported) {
+      const target = new URL(listingUrl, location.origin);
+      if (target.origin === location.origin && /^\/chintai\/bc_\d+\/?$/i.test(target.pathname)) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 3500);
+        try {
+          // GET only. Do not simulate page button clicks, POST, or SUUMO JS.
+          const response = await fetch(target.href, {
+            method: "GET", credentials: "same-origin", redirect: "follow",
+            signal: controller.signal
+          });
+          const mime = String(response.headers?.get("content-type") || "");
+          const actual = new URL(response.url || target.href, location.origin);
+          if (response.ok && actual.href === target.href &&
+              (!mime || /text\/html/i.test(mime))) {
+            const html = await response.text();
+            if (batchTaskStillCurrent(task) && html.length >= 1000) {
+              const doc = new DOMParser().parseFromString(html, "text/html");
+              const inputUrl = directReportInputUrlFromListingDoc(doc, target.href);
+              if (inputUrl && batchTaskStillCurrent(task) &&
+                  !currentUncertainSend() && !GM_getValue(FINAL_SEND_GUARD_KEY,null)?.status) {
+                if (queuePageTransition("input")) {
+                  console.info("[SUUMO JJ 上位版] 軽量遷移：掲載画面の表示を省略");
+                  location.assign(inputUrl);
+                  return;
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.debug("[SUUMO JJ 上位版] 軽量遷移は使用不可。通常の掲載画面へ戻します", error?.name || "error");
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    }
+    // Any ambiguity, timeout, unusual URL, stale state, or DOM change: fall back.
+    if (batchTaskStillCurrent(task) && queuePageTransition("listing")) {
+      location.href = listingUrl;
+    }
   }
 
   let nextListingStarted = false;
 
   function goToNextListing() {
-    if (nextListingStarted || !isBatchActive()) return;
+    if (nextListingStarted || !isBatchActive() || !isCurrentTabItem()) return;
     if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
+    clearSendClaimForCurrent();
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
 
     const urls = getBatchUrls();
@@ -1103,18 +1449,24 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
+      toast("次の掲載に進むためのタブ識別情報を保存できません。自動進行を停止しました。",8500);
+      return;
+    }
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
     setFormReady(false);
-    clearReportRetry();
-    setTimeout(() => { location.href = urls[index]; }, 150);
+    GM_deleteValue(REPORT_RETRY_KEY);
+    const task=captureBatchTask();
+    setTimeout(() => { void navigateNextListingWithoutDisplay(task, urls[index]); }, 150);
   }
 
   // 入力完了後は独自の二段階確認を挟まず、SUUMO本来の内容確認画面へ進む。
   // 物件ID・管理情報の一致、送信状態、フォーム準備完了は引き続き検証する。
   async function submitCurrentAndContinue() {
     if (!isBatchActive() || !isInputPage() || !isFormReady() || isBatchError()) return;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (getBatchStage() !== STAGES.INPUT_READY && getBatchStage() !== STAGES.INPUT_CONFIRM) return;
     if (blockUncertainIeloveResend()) return;
 
@@ -1154,51 +1506,154 @@
       return;
     }
 
-    clearReportRetry();
+    clearReportRetry("内容確認へ移動");
+    if(!queuePageTransition("confirm"))return rejectStaleTabPage();
     confirmLink.click();
   }
 
+  function captureSubmissionTarget(){
+    if(!isBatchActive()||!isConfirmPage()||!isCurrentTabItem())return null;
+    const index=getBatchIndex(),urls=getBatchUrls(),ownerToken=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const pageContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(!urls[index]||!ownerToken||getTabOwnerToken()!==ownerToken)return null;
+    const item=currentIeloveExecutionItem();
+    if(getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending"))return null;
+    return {index,url:urls[index],ownerToken,pageUrl:location.href,
+      itemId:pageContext.id,
+      profileSnapshot:item?JSON.stringify(item.profile||{}):null};
+  }
+  function sameSubmissionTarget(target){
+    if(!target||!isBatchActive()||!isConfirmPage()||!isCurrentTabItem()||
+       readTabContext(TAB_ITEM_CONTEXT_KEY)?.id!==target.itemId||
+       location.href!==target.pageUrl||
+       getBatchIndex()!==target.index||getBatchUrls()[target.index]!==target.url||
+       GM_getValue(BATCH_KEYS.ownerToken,"")!==target.ownerToken||
+       getTabOwnerToken()!==target.ownerToken||getBatchStage()!==STAGES.SUBMITTING_FINAL||
+       currentUncertainSend())return false;
+    const item=currentIeloveExecutionItem();
+    if(getIeloveExecution()&&(!item||item.url!==target.url||
+       JSON.stringify(item.profile||{})!==target.profileSnapshot||item.status==="sending"))return false;
+    return true;
+  }
+  function readSendClaim(){
+    return JSON.parse(localStorage.getItem(SEND_CLAIM_STORAGE_KEY)||"null");
+  }
+  function clearSendClaimForCurrent(){
+    try{
+      const claim=readSendClaim(),index=getBatchIndex();
+      if(claim?.ownerToken===GM_getValue(BATCH_KEYS.ownerToken,"") &&
+         claim?.index===index&&claim?.url===getBatchUrls()[index]){
+        localStorage.removeItem(SEND_CLAIM_STORAGE_KEY);
+      }
+    }catch(error){console.warn("[SUUMO JJ 上位版] 送信履歴の整理に失敗",error);}
+  }
+  function reportSendLockUnavailable(){
+    setBatchError(true);
+    // Do not move to the next listing or automatically retry a potentially active send.
+    toast("安全確認：複数タブの送信排他を使用できません。送信を停止しました。",8500);
+    recordIssue({phase:"最終送信",index:getBatchIndex()+1,
+      kind:"送信安全機構の使用不可",action:"自動送信停止・要確認",
+      detail:"送信の重複防止に必要なブラウザ機能を使用できません",attempts:1,
+      url:getBatchUrls()[getBatchIndex()]});
+  }
   async function handleConfirmPage() {
-    if (!isBatchActive() || confirmSendStarted) return;
-    if (blockUncertainIeloveResend()) return;
-    const stage = getBatchStage();
-    if (stage !== STAGES.SUBMITTING_CONFIRM && stage !== STAGES.SUBMITTING_FINAL) return;
+    if (!isBatchActive() || confirmSendStarted || currentUncertainSend() ||
+        blockUncertainIeloveResend()) return;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
+    const stage=getBatchStage();
+    if(stage!==STAGES.SUBMITTING_CONFIRM&&stage!==STAGES.SUBMITTING_FINAL)return;
+    const preTarget=captureSubmissionTarget();
+    if(!preTarget)return;
     setSubmitting(true);
     setBatchStage(STAGES.SUBMITTING_FINAL);
     setConfirmReady(false);
     updateBatchPanel();
-    toast("確認画面を確認しました。\n送信します…", 1800);
-    const sendLink = await waitForReadyElement(
-      'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]', 6000,
-      el => el.isConnected && !el.hasAttribute("disabled")
+    toast("確認画面を確認しました。\n送信します…",1800);
+    const sendLink=await waitForReadyElement(
+      'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]',6000,
+      el=>el.isConnected&&!el.hasAttribute("disabled")
     );
-
-    if (!sendLink) {
+    if(!sendLink){
       scheduleReportRetry("最終送信ボタン取得","SUUMOの確認画面で最終送信ボタンが見つかりません");
       return;
     }
-
-    // 最終送信前の安全待機は維持。
-    await sleep(250);
-    if (!isBatchActive() || !isConfirmPage() || confirmSendStarted || !sendLink.isConnected) return;
-    confirmSendStarted = true;
-    const currentIndex=getBatchIndex();
-    GM_setValue(FINAL_SEND_GUARD_KEY,{index:currentIndex,url:getBatchUrls()[currentIndex],
-      status:"sending",startedAt:Date.now()});
-    saveIeloveExecutionStatus("sending");
-    markAdvancedTiming("final-send-clicked");
-    sendLink.click();
+    await sleep(250); // Keep the existing pre-send safety interval.
+    if(!sameSubmissionTarget(preTarget)||confirmSendStarted||!sendLink.isConnected)return;
+    // When Web Locks is absent, fail closed instead of depending on a shared GM flag.
+    try{
+      if(!navigator.locks?.request||typeof localStorage?.getItem!=="function"){
+        reportSendLockUnavailable();
+        return;
+      }
+      await navigator.locks.request(SEND_LOCK_NAME,{mode:"exclusive",ifAvailable:true},async lock=>{
+        if(!lock){
+          toast("別のタブが送信処理中のため、このタブでは送信しません",6000);
+          return;
+        }
+        // Re-check inside the cross-tab critical section after all awaits.
+        if(!sameSubmissionTarget(preTarget)||confirmSendStarted||!sendLink.isConnected)return;
+        const claim=readSendClaim();
+        if(claim?.ownerToken===preTarget.ownerToken){
+          toast("同じ一括処理の送信履歴があるため、重複送信を停止しました",8500);
+          return;
+        }
+        const marker={id:createBatchOwnerToken(),itemId:preTarget.itemId,
+          ownerToken:preTarget.ownerToken,index:preTarget.index,
+          url:preTarget.url,at:Date.now()};
+        // Persist the claim before the click. Lock serializes two tabs on same origin.
+        localStorage.setItem(SEND_CLAIM_STORAGE_KEY,JSON.stringify(marker));
+        if(!saveTabContext(TAB_SENT_CONTEXT_KEY,marker)){
+          // No click is ever issued if the tab-local send identity cannot be persisted.
+          reportSendLockUnavailable();
+          return;
+        }
+        // Quarantine from the first click, including the interval before timeout.
+        sessionStorage.setItem(TAB_UNCERTAIN_SEND_KEY,"1");
+        confirmSendStarted=true;
+        GM_setValue(FINAL_SEND_GUARD_KEY,{...marker,status:"sending",startedAt:marker.at});
+        saveIeloveExecutionStatus("sending");
+        markAdvancedTiming("final-send-clicked");
+        startBackgroundWatchdog();
+        if(!queuePageTransition("complete",marker.id)){
+          reportSendLockUnavailable();
+          return;
+        }
+        sendLink.click();
+      });
+    }catch(error){
+      console.error("[SUUMO JJ 上位版] 排他送信を停止",error);
+      // A partial failure after claiming may mean a send was issued; never retry.
+      reportSendLockUnavailable();
+    }
   }
 
   async function handleCompletePage() {
     if (!isBatchActive()) return;
+    if(!isCurrentTabSent())return rejectStaleTabPage();
+    // A completion URL with an explicit HTTP error is not a confirmed POST result.
+    const responseStatus=Number(performance.getEntriesByType?.("navigation")?.[0]?.responseStatus);
+    if(Number.isFinite(responseStatus)&&responseStatus>=400){
+      advanceUncertainSubmission("完了画面の取得 HTTP "+responseStatus+"：送信結果を確認できませんでした");
+      return;
+    }
     const stage = getBatchStage();
-    if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
+    if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE &&
+        stage !== STAGES.SEND_UNCERTAIN) return;
+    // A late completion is safe to associate only with the SAME active item
+    // and same persisted POST ID; isCurrentTabSent() checks both.
+    if(stage===STAGES.SEND_UNCERTAIN){
+      const id="最終送信:"+(getBatchIndex()+1),url=getBatchUrls()[getBatchIndex()];
+      GM_setValue(ISSUE_LOG_KEY,issueList().filter(row=>
+        !(row.id===id && row.kind==="送信結果不明" && row.url===publicListingUrl(url))));
+    }
+    // The completion passed the same-item, same-POST verification.
+    try{sessionStorage.removeItem(TAB_UNCERTAIN_SEND_KEY);}catch(_){}
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
+    clearSendClaimForCurrent();
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
-    clearReportRetry();
+    GM_deleteValue(REPORT_RETRY_KEY);
     setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
@@ -1208,6 +1663,7 @@
   }
 
   function retryCurrentListing() {
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (currentIeloveExecutionItem()?.status === "sending"||currentUncertainSend()) {
       toast("送信結果が未確認です。再実行すると二重送信になる可能性があります。", 6500);
       return;
@@ -1238,14 +1694,17 @@
 
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
+    if(!queuePageTransition("listing"))return rejectStaleTabPage();
+    const task=captureBatchTask();
     setTimeout(() => {
-      location.href = currentUrl;
+      if(batchTaskStillCurrent(task))location.href = currentUrl;
     }, 500);
   }
 
   // 送信せず次へ。手動スキップと掲載終了時の自動スキップで共通化する。
   function advancePastSkippedListing(reason,uncertain=false) {
-    if(nextListingStarted || !isBatchActive() || (isSubmitting()&&!uncertain))return false;
+    if(nextListingStarted || !isBatchActive() || !isCurrentTabItem() ||
+       (uncertain&&!isCurrentTabSent()) || (isSubmitting()&&!uncertain))return false;
     const urls=getBatchUrls(), index=getBatchIndex();
     if(!urls[index])return false;
     const item=currentIeloveExecutionItem();
@@ -1265,7 +1724,10 @@
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
     GM_setValue(BATCH_SKIP_LOG_KEY,log);
     saveIeloveExecutionStatus(uncertain?"uncertain":"skipped");
-    if(uncertain)GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    if(uncertain){
+      clearSendClaimForCurrent();
+      GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    }
     const execution=getIeloveExecution();
     if(execution?.items[index]?.url===urls[index]){
       execution.items[index].skipReason=String(reason||"スキップ");
@@ -1284,6 +1746,10 @@
       return true;
     }
     GM_setValue(BATCH_KEYS.index,next);
+    if(!primeCurrentTabItem()||!queuePageTransition("listing")){
+      toast("次の掲載の識別情報を保存できないため自動進行を停止しました。",8500);
+      return false;
+    }
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setBatchError(false);
@@ -1315,7 +1781,7 @@
   }
 
   function autoSkipEndedListingIfConfirmed() {
-    if(!isBatchActive()||getBatchStage()!==STAGES.LISTING||isSubmitting()||
+    if(!isBatchActive()||!isCurrentTabItem()||getBatchStage()!==STAGES.LISTING||isSubmitting()||
        isFormReady()||!isConfirmedListingEndedPage())return false;
     const urls=getBatchUrls(), index=getBatchIndex(), expected=urls[index];
     if(!expected)return false;
@@ -1331,8 +1797,19 @@
 
 
   function stopBatch() {
-    const ok = confirm("一括処理を中止しますか？\n\n進捗はリセットされます。");
+    if(!isBatchActive()||!isCurrentTabItem())return rejectStaleTabPage();
+    const ok = confirm(currentUncertainSend()
+      ? "送信結果が未確認です。送信履歴を保持して自動処理を停止しますか？"
+      : "一括処理を中止しますか？\n\n進捗はリセットされます。");
     if (!ok) return;
+    if(!isBatchActive()||!isCurrentTabItem())return rejectStaleTabPage();
+    if(currentUncertainSend()){
+      advanceUncertainSubmission("中止操作時に送信結果を確認できませんでした");
+      cancelAutoAction(false);
+      updateBatchPanel();
+      toast("送信結果が未確認のため、送信履歴を保持して停止しています。再送信せず受信状況を確認してください。",11000);
+      return;
+    }
     clearBatch();
     document.getElementById("tm-batch-status")?.remove();
     toast("一括処理を中止しました");
@@ -1340,6 +1817,7 @@
 
   async function handleListingPage() {
     if (!isBatchActive()) return;
+    if(!bindListingToTab())return rejectStaleTabPage();
     if (currentIeloveExecutionItem()?.status === "complete") {
       goToNextListing();
       return;
@@ -1359,7 +1837,14 @@
     markAdvancedTiming("listing-page-ready");
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
     if(autoSkipEndedListingIfConfirmed())return;
-    if (link && isBatchActive() && isListingPage()) {
+    if (link && isBatchActive() && isListingPage() && isCurrentTabItem()) {
+      // Use only a real, listing-bound GET link as evidence for next item's
+      // optional background fetch. Never infer or manufacture a form URL.
+      try {
+        sessionStorage.setItem(FAST_REPORT_NAV_KEY,
+          directReportInputUrlFromListingDoc(document, urls[index]) ? "1" : "0");
+      } catch (_) {}
+      if(!queuePageTransition("input"))return rejectStaleTabPage();
       markAdvancedTiming("listing-report-link-clicked");
       link.click();
       return;
@@ -1433,11 +1918,14 @@
 
   async function reconcileBatchState() {
     if (watchdogBusy || !isBatchActive()) return;
+    if(isListingPage()){if(!bindListingToTab())return;}
+    else if(!isCurrentTabItem())return;
     watchdogBusy = true;
     try {
       const stage = getBatchStage();
       if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend()) && !isCompletePage()){
-        advanceUncertainSubmission("送信後の完了ページを確認できず、画面が復帰しました");
+        if(!isConfirmPage())advanceUncertainSubmission("送信後に完了ページ以外の画面へ遷移しました");
+        else startBackgroundWatchdog();
         return;
       }
 
@@ -1462,9 +1950,7 @@
 
       if (isCompletePage()) {
         if (stage === STAGES.SUBMITTING_FINAL || stage === STAGES.COMPLETE) {
-          setBatchStage(STAGES.COMPLETE);
-          saveIeloveExecutionStatus("complete");
-          goToNextListing();
+          await handleCompletePage();
         }
       }
     } finally {
@@ -1472,9 +1958,22 @@
     }
   }
 
+  let sendWatchdogTimer=null;
   function startBackgroundWatchdog() {
-    // 7.38: 常時setInterval監視は廃止。
-    // ブラウザから実行機会が戻ったイベント時だけ状態を照合する。
+    if(sendWatchdogTimer){clearTimeout(sendWatchdogTimer);sendWatchdogTimer=null;}
+    if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend())return;
+    const record=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    if(!record||!Number.isFinite(Number(record.startedAt)))return;
+    const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const remaining=Math.max(0,UNKNOWN_SEND_TIMEOUT_MS-(Date.now()-Number(record.startedAt)));
+    sendWatchdogTimer=setTimeout(()=>{
+      sendWatchdogTimer=null;
+      if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend()||
+         getBatchIndex()!==record.index||getBatchUrls()[record.index]!==record.url||
+         GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
+      // Deadline means UNKNOWN, not failed and not permission to retry.
+      advanceUncertainSubmission("最終送信後60秒以内に完了画面を確認できませんでした");
+    },remaining);
   }
 
   function startAutoAction(button, phase, strongColor, lightColor) {
@@ -1606,12 +2105,14 @@
       statusBackground = "#eaf3ff";
     }
 
-    const uncertainSend = currentIeloveExecutionItem()?.status === "sending" && !isCompletePage();
+    const uncertainSend = getBatchStage()===STAGES.SEND_UNCERTAIN || (!isCompletePage() && (
+      currentUncertainSend() || currentIeloveExecutionItem()?.status==="sending"
+    ));
     if (uncertainSend) {
       statusText = "⚠ 最終送信を開始済みですが、完了を確認できていません。二重送信防止のため停止しています。";
       statusBackground = "#fff1f0";
     }
-    const canSubmit = isInputPage() && !submitting && formReady && !uncertainSend;
+    const canSubmit = isInputPage() && !submitting && !batchError && formReady && !uncertainSend;
     let mainButton = "";
 
     if (canSubmit) {
@@ -1631,7 +2132,7 @@
         </button>`;
     }
 
-    panel.innerHTML = `
+    const nextPanelMarkup = `
       <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">SUUMO 一括処理</div>
       <div style="font-size:27px;font-weight:bold;margin-bottom:6px;">${Math.min(index + 1, urls.length)} / ${urls.length}</div>
       ${ieloveItem ? `<div style="font-size:13px;font-weight:bold;margin-bottom:5px;">${escapeHtml(ieloveItem.name)} ／ ${escapeHtml(ieloveItem.profile.room)}</div>` : ""}
@@ -1640,9 +2141,17 @@
       <div style="font-size:13px;background:${statusBackground};padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;">${escapeHtml(statusText)}</div>
       ${mainButton}
       <div style="display:flex;gap:7px;">
-        <button id="tm-skip-item" ${submitting ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting ? "default" : "pointer"};">スキップ</button>
+        <button id="tm-skip-item" ${submitting||uncertainSend ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting||uncertainSend ? "default" : "pointer"};">スキップ</button>
         <button id="tm-stop-batch" style="flex:1;padding:8px;cursor:pointer;">中止</button>
       </div>`;
+    // Preserve event handlers, the live countdown, and user focus when only
+    // periodic status reconciliation calls this function with unchanged data.
+    // Never skip batch checks above; only avoid reconstructing identical DOM.
+    if (panel.__suumoLastMarkup !== nextPanelMarkup ||
+        !panel.querySelector("#tm-stop-batch")) {
+      panel.innerHTML = nextPanelMarkup;
+      panel.__suumoLastMarkup = nextPanelMarkup;
+    }
 
     const submit = document.getElementById("tm-submit-next");
     if (submit) {
@@ -1666,7 +2175,7 @@
     if (retryCurrent) retryCurrent.onclick = retryCurrentListing;
 
      const skip = document.getElementById("tm-skip-item");
-    if (skip && !submitting) {
+    if (skip && !submitting && !uncertainSend) {
       skip.onclick = () => {
         cancelAutoAction(false);
         autoActionCancelledPhase = null;
@@ -2597,9 +3106,18 @@
     const owner=getIeloveHandoff();
     const assertCurrent=()=>{
       const latest=getIeloveHandoff();
-      if(!isAuthorizedIeloveBatchSearch(latest) || latest.token!==owner?.token ||
-        latest.index!==owner?.index || latest.searches[propertyIndex]?.url!==searchUrl || isAnyBatchActive()) {
-        throw new Error("取得中に対象物件または実行状態が変わったため停止しました");
+      let reason="";
+      if(!latest)reason="引き継ぎ情報が消去または不正になった";
+      else if(!isAuthorizedIeloveBatchSearch(latest))reason="検索タブのURL・起動識別子が一致しない";
+      else if(latest.token!==owner?.token)reason="別の一括検索が開始された";
+      else if(latest.index!==owner?.index)reason="対象物件番号が変更された";
+      else if(latest.searches[propertyIndex]?.url!==searchUrl)reason="検索条件が途中で変更された";
+      else if(isAnyBatchActive())reason="申告処理へ移行していた";
+      if(reason){
+        const error=new Error("取得中に対象物件または実行状態が変わったため停止しました");
+        error.scanStateChanged=true;
+        error.scanStateReason=reason;
+        throw error;
       }
     };
     assertCurrent();
@@ -2688,7 +3206,7 @@
       if(page===1&&!cards.length) {
         if(isConfirmedNoResultMessage(doc)){
           recordIssue({phase:"検索",index:propertyIndex+1,kind:"検索結果0件",
-            action:"即時自動スキップ",detail:"SUUMOが検索結果0件を明示"});
+            action:"即時自動スキップ",attempts:1,detail:"SUUMOが検索結果0件を明示"});
           advancedMetric("search-total",scanStarted,metrics);
           return [];
         }
@@ -2783,7 +3301,14 @@
           lastError=error;
           const message=String(error?.message||error);
           // 対象切替・申告バッチ開始など、状態が変わった場合には安全停止。
-          if(/取得中に対象物件または実行状態が変わった/.test(message))return;
+          if(error?.scanStateChanged || /取得中に対象物件または実行状態が変わった/.test(message)){
+            // Never auto-skip or retry a stale search. It may belong to a different batch.
+            console.warn("[SUUMO JJ 上位版] 検索を安全停止:",error?.scanStateReason||"状態不一致");
+            toast("検索の対象・実行状態が途中で切り替わりました。誤取得を防ぐため停止しました。"
+              +"\n原因候補："+(error?.scanStateReason||"状態不一致")
+              +"\n複数タブと上位版の重複起動を確認してください。",12000);
+            return;
+          }
           console.warn("[SUUMO JJ 上位版] 検索取得失敗",attempt+"/"+MAX_STAGE_ATTEMPTS,message);
           if(attempt===MAX_STAGE_ATTEMPTS||error?.scanNoRetry)break;
           showIeloveRoomScanProgress((index+1)+"件目：検索処理を再試行 "+(attempt+1)+"/3");
@@ -3199,6 +3724,7 @@
     // ここで保存した値は同じTampermonkeyスクリプトの保存領域を使うため、
     // SUUMO側の申告フォームでもそのまま利用できる。
     if (location.hostname === "cloud.ielove.jp") {
+      if (!/^\/rent(?:\/|$)/.test(location.pathname)) return;
       addIeloveSettingsButton();
       requireProfileManager();
       return;
@@ -3214,9 +3740,13 @@
     }
 
     if (!isBatchActive()) return;
+    if(isListingPage()){
+      if(!bindListingToTab())return rejectStaleTabPage();
+    }else if(!isCurrentTabItem())return rejectStaleTabPage();
     startBackgroundWatchdog();
     if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend())&&!isCompletePage()){
-      advanceUncertainSubmission("送信後の完了画面を確認できませんでした");
+      if(!isConfirmPage())advanceUncertainSubmission("送信後に完了ページ以外の画面へ遷移しました");
+      else startBackgroundWatchdog();
       return;
     }
     updateBatchPanel();

@@ -1,0 +1,537 @@
+{
+  "baselineCommit": "85735877cb3af393a4c6b5413c452544c94a1c7d",
+  "testedSourceSha256": "2a081c9aa4062dfb5d4aab2ba919ba246d1b32a669a26611511c43bea93e24b0",
+  "total": 58,
+  "passed": 58,
+  "failed": 0,
+  "unrunCategories": 7,
+  "scenariosWithClicks": 19,
+  "scenariosWithDocumentNavigation": 11,
+  "scenariosWithBoth": 8,
+  "bfCacheRestorationVerified": [
+    "history/BFCache confirm-back",
+    "history/BFCache complete-back",
+    "history/BFCache confirm-forward"
+  ],
+  "baseline36Failures": [
+    "regression: new batch immediately after click cannot clear guard",
+    "regression: stop before deadline retains unresolved protection",
+    "regression: delayed same-ID completion beyond 90 seconds accepted",
+    "regression: stale stop cannot cancel another owner",
+    "regression: previous retry timer cannot navigate a new batch",
+    "pending POST blocks a different fresh tab from replacing guard",
+    "quarantine persistence failure never clicks"
+  ],
+  "baselineHttp500Failed": true,
+  "performance": [
+    {
+      "oldMs": 1161.5,
+      "newMs": 1159.2000000029802,
+      "oldRequests": 3,
+      "newRequests": 3,
+      "oldParseMs": 10.700000002980232,
+      "newParseMs": 9.000000014901161
+    },
+    {
+      "oldMs": 1157.8999999910593,
+      "newMs": 1159.9000000059605,
+      "oldRequests": 3,
+      "newRequests": 3,
+      "oldParseMs": 8.700000002980232,
+      "newParseMs": 8.599999994039536
+    },
+    {
+      "oldMs": 1158.2999999970198,
+      "newMs": 1160,
+      "oldRequests": 3,
+      "newRequests": 3,
+      "oldParseMs": 8.700000002980232,
+      "newParseMs": 7.4000000059604645
+    }
+  ],
+  "memory": {
+    "description": "1000 synthetic cards, one retained DOM and parsed rows, CDP heap after GC; not peak process memory",
+    "results": [
+      {
+        "before": {
+          "usedSize": 1952396,
+          "totalSize": 2519040,
+          "embedderHeapUsedSize": 821496,
+          "backingStorageSize": 313182
+        },
+        "after": {
+          "usedSize": 1531400,
+          "totalSize": 2154496,
+          "embedderHeapUsedSize": 7231504,
+          "backingStorageSize": 165975
+        }
+      },
+      {
+        "before": {
+          "usedSize": 1962936,
+          "totalSize": 2527232,
+          "embedderHeapUsedSize": 821568,
+          "backingStorageSize": 317316
+        },
+        "after": {
+          "usedSize": 1529832,
+          "totalSize": 2154496,
+          "embedderHeapUsedSize": 7231504,
+          "backingStorageSize": 168042
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "normal: final click exactly once with matching receipt",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: new batch immediately after click cannot clear guard",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: stop before deadline retains unresolved protection",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: delayed same-ID completion beyond 90 seconds accepted",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: stale stop cannot cancel another owner",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: previous retry timer cannot navigate a new batch",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "regression: copied unknown action states automatic progression is stopped",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "unknown: timeout stops queue and disables retry/skip",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "unknown: reload restores visible stopped panel",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 1
+      }
+    },
+    {
+      "name": "pending POST blocks a different fresh tab from replacing guard",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "quarantine persistence failure never clicks",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "completion with old send ID cannot finish current item",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "250ms recheck: index",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "250ms recheck: url",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "250ms recheck: owner",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "250ms recheck: profile",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "250ms recheck: entry",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "missing sessionStorage fails closed",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "no Web Locks fails closed",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "copy: legacy private values and bad dates removed",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "form preparation max3 with 500ms: missing-dom",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 1
+      }
+    },
+    {
+      "name": "form preparation max3 with 500ms: mismatch",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 1
+      }
+    },
+    {
+      "name": "ielove launcher scope /rent",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "ielove launcher scope /rent/",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "ielove launcher scope /rent/index/",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "ielove launcher scope /sale/",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "ielove launcher scope /rental/",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "bb.ielove.jp does not launch",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "browser queue normal10",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 30,
+        "navigations": 40
+      }
+    },
+    {
+      "name": "browser queue mixed10",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 24,
+        "navigations": 36
+      }
+    },
+    {
+      "name": "regression: HTTP500 completion remains unknown until valid completion",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 3,
+        "navigations": 6
+      }
+    },
+    {
+      "name": "concurrent cloned receipts 0ms",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "concurrent cloned receipts 100ms",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "concurrent cloned receipts 400ms",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 1,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "history/BFCache confirm-back",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 5,
+        "navigations": 7
+      }
+    },
+    {
+      "name": "history/BFCache complete-back",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 6,
+        "navigations": 7
+      }
+    },
+    {
+      "name": "history/BFCache confirm-forward",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 5,
+        "navigations": 8
+      }
+    },
+    {
+      "name": "dates preserve skip settings and confirm date",
+      "kind": "dom",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 0,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "ielove acquire/edit/prev/next/normal/handoff preserves values",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 5,
+        "navigations": 0
+      }
+    },
+    {
+      "name": "S1 正常21掲載をゼロ件と誤判定しない",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:missing",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:token",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:index",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:url",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:active",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S2 検索途中の状態変更:new-batch",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S3 URLの起動識別子不一致では自動開始しない",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "S4 残存activeフラグで21件検索停止・更新後も再現・設定保存",
+      "kind": "search-state",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction zero",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction one",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction 30",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction 100",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction 101",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction duplicate",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction different rooms",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction no company link",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "search extraction missing area",
+      "kind": "comparison",
+      "status": "PASS"
+    },
+    {
+      "name": "company exclusion and selection reload compatibility",
+      "kind": "browser",
+      "status": "PASS",
+      "metrics": {
+        "clickEvents": 2,
+        "navigations": 2
+      }
+    }
+  ]
+}
