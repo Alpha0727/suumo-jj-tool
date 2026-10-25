@@ -4,6 +4,7 @@
 // @version      7.54.11
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
+// @match        https://cloud.ielove.jp/rent
 // @match        https://cloud.ielove.jp/rent/*
 // @updateURL    https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
 // @downloadURL  https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js
