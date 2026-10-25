@@ -77,24 +77,85 @@
   // opening a fresh tab never inherits a closed tab's GM-backed queue history.
   // Cross-origin いえらぶ→SUUMO handoff/settings remain GM-backed as needed.
   const TAB_RUNTIME_PREFIX = "suumo_advanced_tab_runtime_v1_";
+  let tabRuntimeFault = false;
+  function failTabRuntime() {
+    tabRuntimeFault = true;
+    // Do not include corrupt values, exception messages, or profile data in logs.
+    console.warn("[SUUMO JJ TEST] タブ専用の保存状態を確認できないため安全停止");
+    if (typeof document !== "undefined" && document.body) {
+      toast("安全停止：タブ専用の保存状態を確認できません。送信・自動進行を停止しました。設定は削除していません。", 11000);
+    }
+  }
+  function validTabRuntimeValue(key, value) {
+    if (key === "ielove_suumo_execution_v1") return value &&
+      Array.isArray(value.items) && value.items.length > 0 && value.items.every(item =>
+        item && typeof item.url === "string" && item.profile && typeof item.profile === "object");
+    if (key === "suumo_batch_index") return Number.isInteger(value) && value >= 0;
+    if (key === "suumo_batch_urls") return Array.isArray(value) && value.every(url => typeof url === "string");
+    if (/^suumo_batch_(active|submitting|confirm_ready|error|form_ready)$/.test(key)) return typeof value === "boolean";
+    if (key === "suumo_batch_owner_token" || key === "suumo_batch_stage") return typeof value === "string" && !!value;
+    return true;
+  }
   function tabGet(key, fallback) {
+    if (tabRuntimeFault) return fallback;
     try {
       const value=sessionStorage.getItem(TAB_RUNTIME_PREFIX+key);
-      return value===null?fallback:JSON.parse(value);
+      if (value === null) return fallback;
+      const parsed = JSON.parse(value);
+      if (!validTabRuntimeValue(key, parsed)) throw new Error("Invalid tab state");
+      return parsed;
     } catch (error) {
-      console.warn("[SUUMO JJ TEST] Tab state is unreadable", key, error);
+      failTabRuntime();
       return fallback;
     }
   }
   function tabSet(key, value) {
     // On storage failure STOP rather than silently falling back to a persistent
     // global store which might outlive the tab and cause a stale batch.
-    sessionStorage.setItem(TAB_RUNTIME_PREFIX+key, JSON.stringify(value));
+    if (tabRuntimeFault) throw new Error("Tab state unavailable");
+    try { sessionStorage.setItem(TAB_RUNTIME_PREFIX+key, JSON.stringify(value)); }
+    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
   }
   function tabDelete(key) {
-    sessionStorage.removeItem(TAB_RUNTIME_PREFIX+key);
+    if (tabRuntimeFault) throw new Error("Tab state unavailable");
+    try { sessionStorage.removeItem(TAB_RUNTIME_PREFIX+key); }
+    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
   }
 
+  // A window.open tab starts with a COPY of the opener's sessionStorage.
+  // Clear only that copy on its first history entry, never on reload or a normal
+  // transition in the original tab. Settings and cross-domain handoff stay in GM.
+  function discardOpenedTabRuntime() {
+    try {
+      const identity = sessionStorage.getItem(TAB_WINDOW_ID_KEY);
+      if (identity && window.name === identity) return; // Same real browser tab.
+      const active = sessionStorage.getItem(TAB_RUNTIME_PREFIX + "suumo_batch_active");
+      if (identity) {
+        // A blank NEW popup has a copied store but no window.name. A lost name
+        // in an existing history entry is ambiguous: preserve receipts and stop.
+        if (!window.opener || history.length !== 1 || pageStamp() || window.name) {
+          failTabRuntime();
+          return;
+        }
+      } else if (active === "true" || sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY) === "1") {
+        failTabRuntime();
+        return;
+      }
+      const keys = [];
+      if (identity) {
+        for (let i = 0; i < sessionStorage.length; i++) keys.push(sessionStorage.key(i));
+        for (const key of keys) if (key?.startsWith(TAB_RUNTIME_PREFIX) ||
+            [TAB_OWNER_TOKEN_KEY, TAB_ITEM_CONTEXT_KEY, TAB_SENT_CONTEXT_KEY,
+             TAB_UNCERTAIN_SEND_KEY, PAGE_NAV_TICKET_KEY, PAGE_ACTIVE_ENTRY_KEY,
+             SEND_CLAIM_STORAGE_KEY, FAST_REPORT_NAV_KEY].includes(key)) sessionStorage.removeItem(key);
+      }
+      const fresh = "suumo-jj-test-tab:" + createBatchOwnerToken();
+      sessionStorage.setItem(TAB_WINDOW_ID_KEY, fresh);
+      window.name = fresh;
+    } catch (_) { failTabRuntime(); }
+  }
+
+  const TAB_WINDOW_ID_KEY = "suumo_advanced_browser_tab_identity_v1";
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
   const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
@@ -323,6 +384,7 @@
       guard.status==="sending";
   }
   function rejectStaleTabPage(){
+    if (tabRuntimeFault) return failTabRuntime();
     // Never touch shared status or index from an older tab.
     toast("安全停止：この画面は現在処理中の掲載と対応していません。元の一括処理タブで確認してください。",9000);
     console.warn("[SUUMO JJ 上位版] 古い画面の実行を拒否",location.pathname);
@@ -784,10 +846,10 @@
 
   const BatchState = {
     get(key, fallback) {
-      return GM_getValue(BATCH_KEYS[key], fallback);
+      return tabGet(BATCH_KEYS[key], fallback);
     },
     set(key, value) {
-      GM_setValue(BATCH_KEYS[key], value);
+      tabSet(BATCH_KEYS[key], value);
     }
   };
 
@@ -801,7 +863,7 @@
   }
 
   function isBatchActive() {
-    return !!tabGet(BATCH_KEYS.active, false) && isBatchOwnerTab();
+    return !!tabGet(BATCH_KEYS.active, false) && isBatchOwnerTab() && !tabRuntimeFault;
   }
 
   function isAnyBatchActive() {
@@ -856,11 +918,14 @@
   }
 
   function setBatch(urls, index = 0, source = "regular") {
+    discardOpenedTabRuntime();
+    if (tabRuntimeFault) return false;
     // A previous POST can still navigate this tab after a timeout.
     // Quarantine this browser tab even if the operator stopped the old batch.
     let sameTabHasUnresolvedPost=true;
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
     const unresolvedPost=tabGet(FINAL_SEND_GUARD_KEY,null);
+    if (tabRuntimeFault) return false;
     if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
       toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
       return false;
@@ -1540,7 +1605,7 @@
     const pageContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!urls[index]||!ownerToken||getTabOwnerToken()!==ownerToken)return null;
     const item=currentIeloveExecutionItem();
-    if(getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending"))return null;
+    if(tabRuntimeFault || (getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending")))return null;
     return {index,url:urls[index],ownerToken,pageUrl:location.href,
       itemId:pageContext.id,
       profileSnapshot:item?JSON.stringify(item.profile||{}):null};
@@ -1556,7 +1621,7 @@
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&(!item||item.url!==target.url||
        JSON.stringify(item.profile||{})!==target.profileSnapshot||item.status==="sending"))return false;
-    return true;
+    return !tabRuntimeFault;
   }
   function readSendClaim(){
     return JSON.parse(sessionStorage.getItem(SEND_CLAIM_STORAGE_KEY)||"null");
@@ -1571,6 +1636,7 @@
     }catch(error){console.warn("[SUUMO JJ 上位版] 送信履歴の整理に失敗",error);}
   }
   function reportSendLockUnavailable(){
+    if (tabRuntimeFault) return failTabRuntime();
     setBatchError(true);
     // Do not move to the next listing or automatically retry a potentially active send.
     toast("安全確認：複数タブの送信排他を使用できません。送信を停止しました。",8500);
@@ -3141,6 +3207,7 @@
       else if(latest.index!==owner?.index)reason="対象物件番号が変更された";
       else if(latest.searches[propertyIndex]?.url!==searchUrl)reason="検索条件が途中で変更された";
       else if(isAnyBatchActive())reason="申告処理へ移行していた";
+      if (tabRuntimeFault) reason="タブ専用の保存状態を確認できない";
       if(reason){
         const error=new Error("取得中に対象物件または実行状態が変わったため停止しました");
         error.scanStateChanged=true;
@@ -3306,6 +3373,7 @@
 
   async function collectIeloveSuumoResults() {
     if (ieloveCollecting || isBatchActive() || !isAuthorizedIeloveBatchSearch()) return;
+    if (tabRuntimeFault) return failTabRuntime();
     const handoff = getIeloveHandoff();
     if (!handoff) return;
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
@@ -3759,6 +3827,9 @@
     }
 
     if (location.hostname !== "suumo.jp") return;
+
+    discardOpenedTabRuntime();
+    if (tabRuntimeFault) return;
 
     // Runtime progress belongs to this tab; no stale global-batch recovery UI.
     addMainButtons();

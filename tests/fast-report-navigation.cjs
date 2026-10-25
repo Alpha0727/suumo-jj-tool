@@ -34,7 +34,7 @@ function setup(o={}) {
   setTimeout,clearTimeout,
   DOMParser:class{parseFromString(){return o.doc||doc()}},
   currentUncertainSend:()=>Boolean(o.uncertain),
-  GM_getValue:()=>o.guard||null,
+  tabGet:()=>o.guard||null,
   FINAL_SEND_GUARD_KEY:"guard",
   queuePageTransition:kind=>{tickets.push(kind);return o.ticket!==false},
   console:{info(){},debug(){}},

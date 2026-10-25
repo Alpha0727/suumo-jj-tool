@@ -15,6 +15,7 @@ function sourceBetween(begin,end){
 }
 const tabHelpers=sourceBetween("  const TAB_RUNTIME_PREFIX =", "  const TAB_OWNER_TOKEN_KEY =");
 const stages=sourceBetween("  function getBatchStage()","  function createBatchOwnerToken()");
+const adapter=sourceBetween("  const BatchState = {", "  function getBatchUrls()");
 const activeHelpers=sourceBetween("  function getBatchUrls()","  function requireProfileManager()");
 function makeStorage(shared=new Map()){
  return {
@@ -41,8 +42,8 @@ function makeTab(store=makeStorage()){
   isBatchOwnerTab:()=>true
  };
  vm.createContext(ctx);
- vm.runInContext(tabHelpers+"\n"+stages+"\n"+activeHelpers+
-  "\nglobalThis.api={tabGet,tabSet,tabDelete,getBatchStage,setBatchStage,getBatchIndex,getBatchUrls,isBatchActive,isAnyBatchActive,setSubmitting,isSubmitting};",ctx);
+ vm.runInContext(tabHelpers+"\n"+stages+"\n"+adapter+"\n"+activeHelpers+
+  "\nglobalThis.api={BatchState,tabGet,tabSet,tabDelete,getBatchStage,setBatchStage,getBatchIndex,getBatchUrls,isBatchActive,isAnyBatchActive,setSubmitting,isSubmitting};",ctx);
  return {...ctx,api:ctx.api,gm,store};
 }
 test("TEST metadata cannot auto-run on real SUUMO or いえらぶ",()=>{
@@ -115,4 +116,18 @@ test("Previous manual stale-history recovery UI is not present",()=>{
  assert.doesNotMatch(src,/function showStaleBatchRecoveryDialog/);
  assert.doesNotMatch(src,/function clearConfirmedDormantBatch/);
  assert.doesNotMatch(src,/function checkLiveBatchOwner/);
+});
+
+test("BatchState compatibility adapter also uses the tab store exclusively",()=>{
+ const f=makeTab();assert.equal(f.api.BatchState.get('active',false),false);
+ f.api.BatchState.set('active',true);assert.equal(f.api.isAnyBatchActive(),true);
+ assert.doesNotMatch(src,/GM_(?:get|set|delete)Value\(BATCH_KEYS[.\[]/);
+});
+for(const bad of ['{bad','"active"'])test('Corrupt runtime stays stopped without GM fallback: '+bad,()=>{
+ const f=makeTab();f.store.setItem('suumo_advanced_tab_runtime_v1_suumo_batch_active',bad);
+ assert.equal(f.api.isAnyBatchActive(),false);assert.throws(()=>f.api.tabSet('suumo_batch_active',true));assert.equal(f.gm.get('profile_manager1'),'keep');
+});
+test('Quota failure stops the tab runtime and leaves GM data intact',()=>{
+ const store=makeStorage();store.setItem=()=>{throw Error('quota')};const f=makeTab(store);
+ assert.throws(()=>f.api.tabSet('suumo_batch_active',true));assert.equal(f.api.isAnyBatchActive(),false);assert.equal(f.gm.get('profile_manager1'),'keep');
 });

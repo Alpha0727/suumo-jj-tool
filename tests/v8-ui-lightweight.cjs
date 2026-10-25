@@ -74,6 +74,7 @@ function panelHarness(){
  const buttons=new Map();
  const data={active:true,ready:false,error:false,submitting:false,uncertain:false,stage:"input-preparing",index:0};
  const panel={
+  style:{},
   html:"",
   get innerHTML(){return this.html},
   set innerHTML(x){writes++;this.html=x;buttons.clear()},

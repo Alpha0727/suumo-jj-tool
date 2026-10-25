@@ -1,11 +1,11 @@
 // Run: node tests/optimization.cjs (requires Playwright and Chromium).
-// Regression benchmark pinned to v7.54.8 archive. Only local fixtures; no real-site requests or submissions.
+// Regression benchmark against shipping v8.0.2; candidate is current source. Only local fixtures; no real-site requests or submissions.
 const {chromium} = require('playwright');
 const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
-const old = require('node:child_process').execFileSync('git',['show','85735877cb3af393a4c6b5413c452544c94a1c7d:SUUMO-DEV.user.js'],{cwd:root,encoding:'utf8'});
+const old = require('node:child_process').execFileSync('git',['show','7f0ce6d7df1e659f190963831c8f591ec67d4662:SUUMO-DEV.user.js'],{cwd:root,encoding:'utf8'});
 const current = fs.readFileSync(path.join(root,'SUUMO-DEV.user.js'),'utf8');
 const keyword = '東京都葛飾区金町3 2024年5月 1階 18.98m 6.7万円';
 function search(pc=100, fw=keyword) {return 'https://suumo.jp/jj/chintai/ichiran/FR301FC011/?'+new URLSearchParams({fw,pc:String(pc),suumo_jj_batch:'fixture'})}
@@ -72,5 +72,5 @@ const cases=[['zero',[html([])]],['one',[html([card(1)])]],['30',[html(Array.fro
 for(const [name,pages] of cases){const a=await run(old,pages),b=await run(current,pages);assert.deepEqual(b.groups,a.groups);assert.equal(b.error,undefined);tests.push({name,status:'PASS',urls:b.groups.reduce((n,g)=>n+g.urls.length,0)});console.log('PASS baseline vs current',name)}
 const pages=[html(Array.from({length:100},(_,i)=>card(i)),2),html(Array.from({length:100},(_,i)=>card(100+i)),3),html(Array.from({length:100},(_,i)=>card(200+i)),4),html([card(300)])];
 for(let i=0;i<3;i++){const a=await run(old,pages,{latency:300}),b=await run(current,pages,{latency:300});assert.deepEqual(a.groups,b.groups);benchmark.push({oldMs:a.ms,newMs:b.ms,oldRequests:a.calls.length,newRequests:b.calls.length,oldParseMs:a.parseMs,newParseMs:b.parseMs})}
-const out={baselineCommit:'85735877cb3af393a4c6b5413c452544c94a1c7d',baselineSha256:require('crypto').createHash('sha256').update(old).digest('hex'),candidateSha256:require('crypto').createHash('sha256').update(current).digest('hex'),oldVersion:old.match(/@version\s+(\S+)/)[1],newVersion:current.match(/@version\s+(\S+)/)[1],tests,benchmark};fs.writeFileSync(process.env.QA_COMPARISON_OUTPUT||'/tmp/suumo-search-regression.json',JSON.stringify(out,null,2));console.log(JSON.stringify(out,null,2));
+const out={baselineCommit:'7f0ce6d7df1e659f190963831c8f591ec67d4662',baselineSha256:require('crypto').createHash('sha256').update(old).digest('hex'),candidateSha256:require('crypto').createHash('sha256').update(current).digest('hex'),oldVersion:old.match(/@version\s+(\S+)/)[1],newVersion:current.match(/@version\s+(\S+)/)[1],tests,benchmark};fs.writeFileSync(process.env.QA_COMPARISON_OUTPUT||'/tmp/suumo-search-regression.json',JSON.stringify(out,null,2));console.log(JSON.stringify(out,null,2));
 }finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});
