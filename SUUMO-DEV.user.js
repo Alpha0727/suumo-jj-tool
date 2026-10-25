@@ -80,6 +80,8 @@
   const SEND_LOCK_NAME = "suumo-jj-advanced-final-send";
   const SEND_CLAIM_STORAGE_KEY = "suumo_jj_advanced_final_send_claim_v1";
   const UNKNOWN_SEND_TIMEOUT_MS = 60000;
+  const TAB_ITEM_CONTEXT_KEY = "suumo_advanced_tab_item_context_v1";
+  const TAB_SENT_CONTEXT_KEY = "suumo_advanced_tab_sent_context_v1";
   const RETRY_WAIT_MS = 500;
   const MAX_STAGE_ATTEMPTS = 3;
 
@@ -130,6 +132,69 @@
     const ownerToken = String(GM_getValue(BATCH_KEYS.ownerToken, "") || "");
     const tabToken = getTabOwnerToken();
     return !!ownerToken && !!tabToken && ownerToken === tabToken;
+  }
+
+  // The batch's shared index is NOT proof of which listing created this tab's page.
+  // Only the matching listing URL may establish a tab-local item context.
+  // It then survives listing -> form -> confirmation -> completion via sessionStorage.
+  function readTabContext(key){
+    try{return JSON.parse(sessionStorage.getItem(key)||"null");}catch(_){return null;}
+  }
+  function saveTabContext(key,value){
+    try{
+      sessionStorage.setItem(key,JSON.stringify(value));
+      return true;
+    }catch(_){return false;}
+  }
+  function forgetTabContexts(){
+    try{
+      sessionStorage.removeItem(TAB_ITEM_CONTEXT_KEY);
+      sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
+    }catch(_){}
+  }
+  function currentBatchIdentity(){
+    if(!isBatchOwnerTab() || !GM_getValue(BATCH_KEYS.active,false))return null;
+    const index=Number(GM_getValue(BATCH_KEYS.index,0))||0;
+    const urls=GM_getValue(BATCH_KEYS.urls,[]);
+    const ownerToken=GM_getValue(BATCH_KEYS.ownerToken,"");
+    const url=Array.isArray(urls)?urls[index]:null;
+    return url&&ownerToken?{ownerToken,index,url}:null;
+  }
+  function matchesBatchIdentity(ctx){
+    const now=currentBatchIdentity();
+    return !!now&&!!ctx&&ctx.ownerToken===now.ownerToken&&
+      ctx.index===now.index&&ctx.url===now.url&&!!ctx.id;
+  }
+  function isCurrentTabItem(){
+    return matchesBatchIdentity(readTabContext(TAB_ITEM_CONTEXT_KEY));
+  }
+  function bindListingToTab(){
+    if(!isListingPage())return false;
+    const current=currentBatchIdentity();
+    if(!current)return false;
+    const from=String(location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+    const expected=String(current.url.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+    if(!from||from!==expected)return false;
+    const old=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(matchesBatchIdentity(old))return true;
+    const fresh={...current,id:createBatchOwnerToken(),boundAt:Date.now()};
+    if(!saveTabContext(TAB_ITEM_CONTEXT_KEY,fresh))return false;
+    try{sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);}catch(_){}
+    return true;
+  }
+  function isCurrentTabSent(){
+    const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    return isCurrentTabItem()&&ctx?.itemId===item?.id&&
+      ctx?.id&&ctx.id===guard?.id&&ctx.index===guard.index&&
+      ctx.url===guard.url&&ctx.ownerToken===guard.ownerToken&&
+      guard.status==="sending";
+  }
+  function rejectStaleTabPage(){
+    // Never touch shared status or index from an older tab.
+    toast("安全停止：この画面は現在処理中の掲載と対応していません。元の一括処理タブで確認してください。",9000);
+    console.warn("[SUUMO JJ 上位版] 古い画面の実行を拒否",location.pathname);
+    return false;
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
@@ -494,6 +559,7 @@
 
   async function prepareReportForm(forceRetry = false) {
     if (!isBatchActive() || !isInputPage()) return false;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (!requireProfileManager()) return false;
     if (formPreparationRunning) return false;
     if (isFormReady()) return true;
@@ -651,6 +717,7 @@
     }
     GM_deleteValue(REPORT_RETRY_KEY);
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    forgetTabContexts();
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -674,6 +741,7 @@
     GM_deleteValue(BATCH_KEYS.ownerToken);
     GM_deleteValue(BATCH_KEYS.stage);
     clearTabOwnerToken();
+    forgetTabContexts();
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
@@ -963,9 +1031,9 @@
     if(/掲載終了|掲載が終了/.test(msg))return "SUUMO上で掲載終了を確認しました";
     if(/(?:検索結果|賃貸).*0件|物件がありません/.test(msg))return "検索結果の掲載件数が0件でした";
     if(/住戸条件|一致する掲載/.test(msg))return "指定した住戸条件に一致する掲載がありません";
+    if(/最終送信ボタン|送信ボタン/.test(msg))return "SUUMOの最終送信ボタンを取得できませんでした";
     if(/最終送信|送信後|送信結果|完了画面/.test(msg))return "送信結果を確認できませんでした（自動再送信なし）";
     if(/入力結果|管理会社情報|プロファイル|必要項目/.test(msg))return "フォーム入力値と必要項目の照合に失敗しました";
-    if(/最終送信ボタン|送信ボタン/.test(msg))return "SUUMOの最終送信ボタンを取得できませんでした";
     if(/確認画面|内容確認/.test(msg))return "SUUMOの内容確認画面に進めませんでした";
     if(/申告フォーム|DOM待機|フォーム準備/.test(msg))return "申告フォームの読込・準備に失敗しました";
     if(/申告リンク|掲載リンク/.test(msg))return "掲載ページから申告リンクを取得できませんでした";
@@ -1007,7 +1075,11 @@
     return known.includes(String(value))?String(value):"要確認";
   }
   function validIssueDate(value){
-    const v=String(value||"");return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(v)?v.slice(0,24):"日時不明";
+    // Strict ISO UTC input only; never copy arbitrary suffixes from old logs.
+    const v=String(value||"");
+    if(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v))return "日時不明";
+    const parsed=new Date(v);
+    return Number.isFinite(parsed.getTime())&&parsed.toISOString()===v?v:"日時不明";
   }
   function formatIssueReport(rows){
     return ["【SUUMO JJ 上位版 エラー報告】","バージョン："+SCRIPT_VERSION,
@@ -1082,7 +1154,7 @@
   }
   // 送信前だけ自動再試行する。確認結果が不明なPOSTは絶対に再送信しない。
   function scheduleReportRetry(phase,message){
-    if(!isBatchActive()||nextListingStarted)return false;
+    if(!isBatchActive()||!isCurrentTabItem()||nextListingStarted)return false;
     const index=getBatchIndex(),url=getBatchUrls()[index],item=currentIeloveExecutionItem();
     if(!url||(getIeloveExecution()&&!item)||item?.status==="sending"||currentUncertainSend())return false;
     const prev=GM_getValue(REPORT_RETRY_KEY,null);
@@ -1111,6 +1183,7 @@
     return record?.status==="sending"&&record.index===index&&record.url===getBatchUrls()[index];
   }
   function advanceUncertainSubmission(detail){
+    if(!isCurrentTabSent())return false;
     const item=currentIeloveExecutionItem();
     if((item?.status!=="sending"&&!currentUncertainSend())||nextListingStarted)return false;
     recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
@@ -1121,7 +1194,7 @@
   let nextListingStarted = false;
 
   function goToNextListing() {
-    if (nextListingStarted || !isBatchActive()) return;
+    if (nextListingStarted || !isBatchActive() || !isCurrentTabItem()) return;
     if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
     clearSendClaimForCurrent();
@@ -1149,6 +1222,7 @@
     }
 
     GM_setValue(BATCH_KEYS.index, index);
+    forgetTabContexts();
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
@@ -1161,6 +1235,7 @@
   // 物件ID・管理情報の一致、送信状態、フォーム準備完了は引き続き検証する。
   async function submitCurrentAndContinue() {
     if (!isBatchActive() || !isInputPage() || !isFormReady() || isBatchError()) return;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (getBatchStage() !== STAGES.INPUT_READY && getBatchStage() !== STAGES.INPUT_CONFIRM) return;
     if (blockUncertainIeloveResend()) return;
 
@@ -1205,16 +1280,20 @@
   }
 
   function captureSubmissionTarget(){
-    if(!isBatchActive()||!isConfirmPage())return null;
+    if(!isBatchActive()||!isConfirmPage()||!isCurrentTabItem())return null;
     const index=getBatchIndex(),urls=getBatchUrls(),ownerToken=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const pageContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!urls[index]||!ownerToken||getTabOwnerToken()!==ownerToken)return null;
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending"))return null;
     return {index,url:urls[index],ownerToken,pageUrl:location.href,
+      itemId:pageContext.id,
       profileSnapshot:item?JSON.stringify(item.profile||{}):null};
   }
   function sameSubmissionTarget(target){
-    if(!target||!isBatchActive()||!isConfirmPage()||location.href!==target.pageUrl||
+    if(!target||!isBatchActive()||!isConfirmPage()||!isCurrentTabItem()||
+       readTabContext(TAB_ITEM_CONTEXT_KEY)?.id!==target.itemId||
+       location.href!==target.pageUrl||
        getBatchIndex()!==target.index||getBatchUrls()[target.index]!==target.url||
        GM_getValue(BATCH_KEYS.ownerToken,"")!==target.ownerToken||
        getTabOwnerToken()!==target.ownerToken||getBatchStage()!==STAGES.SUBMITTING_FINAL||
@@ -1248,6 +1327,7 @@
   async function handleConfirmPage() {
     if (!isBatchActive() || confirmSendStarted || currentUncertainSend() ||
         blockUncertainIeloveResend()) return;
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     const stage=getBatchStage();
     if(stage!==STAGES.SUBMITTING_CONFIRM&&stage!==STAGES.SUBMITTING_FINAL)return;
     const preTarget=captureSubmissionTarget();
@@ -1285,10 +1365,16 @@
           toast("同じ一括処理の送信履歴があるため、重複送信を停止しました",8500);
           return;
         }
-        const marker={ownerToken:preTarget.ownerToken,index:preTarget.index,
+        const marker={id:createBatchOwnerToken(),itemId:preTarget.itemId,
+          ownerToken:preTarget.ownerToken,index:preTarget.index,
           url:preTarget.url,at:Date.now()};
         // Persist the claim before the click. Lock serializes two tabs on same origin.
         localStorage.setItem(SEND_CLAIM_STORAGE_KEY,JSON.stringify(marker));
+        if(!saveTabContext(TAB_SENT_CONTEXT_KEY,marker)){
+          // No click is ever issued if the tab-local send identity cannot be persisted.
+          reportSendLockUnavailable();
+          return;
+        }
         confirmSendStarted=true;
         GM_setValue(FINAL_SEND_GUARD_KEY,{...marker,status:"sending",startedAt:marker.at});
         saveIeloveExecutionStatus("sending");
@@ -1305,6 +1391,7 @@
 
   async function handleCompletePage() {
     if (!isBatchActive()) return;
+    if(!isCurrentTabSent())return rejectStaleTabPage();
     const stage = getBatchStage();
     if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
     setBatchStage(STAGES.COMPLETE);
@@ -1322,6 +1409,7 @@
   }
 
   function retryCurrentListing() {
+    if(!isCurrentTabItem())return rejectStaleTabPage();
     if (currentIeloveExecutionItem()?.status === "sending"||currentUncertainSend()) {
       toast("送信結果が未確認です。再実行すると二重送信になる可能性があります。", 6500);
       return;
@@ -1359,7 +1447,8 @@
 
   // 送信せず次へ。手動スキップと掲載終了時の自動スキップで共通化する。
   function advancePastSkippedListing(reason,uncertain=false) {
-    if(nextListingStarted || !isBatchActive() || (isSubmitting()&&!uncertain))return false;
+    if(nextListingStarted || !isBatchActive() || !isCurrentTabItem() ||
+       (uncertain&&!isCurrentTabSent()) || (isSubmitting()&&!uncertain))return false;
     const urls=getBatchUrls(), index=getBatchIndex();
     if(!urls[index])return false;
     const item=currentIeloveExecutionItem();
@@ -1401,6 +1490,7 @@
       return true;
     }
     GM_setValue(BATCH_KEYS.index,next);
+    forgetTabContexts();
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setBatchError(false);
@@ -1432,7 +1522,7 @@
   }
 
   function autoSkipEndedListingIfConfirmed() {
-    if(!isBatchActive()||getBatchStage()!==STAGES.LISTING||isSubmitting()||
+    if(!isBatchActive()||!isCurrentTabItem()||getBatchStage()!==STAGES.LISTING||isSubmitting()||
        isFormReady()||!isConfirmedListingEndedPage())return false;
     const urls=getBatchUrls(), index=getBatchIndex(), expected=urls[index];
     if(!expected)return false;
@@ -1457,6 +1547,7 @@
 
   async function handleListingPage() {
     if (!isBatchActive()) return;
+    if(!bindListingToTab())return rejectStaleTabPage();
     if (currentIeloveExecutionItem()?.status === "complete") {
       goToNextListing();
       return;
@@ -1550,6 +1641,8 @@
 
   async function reconcileBatchState() {
     if (watchdogBusy || !isBatchActive()) return;
+    if(isListingPage()){if(!bindListingToTab())return;}
+    else if(!isCurrentTabItem())return;
     watchdogBusy = true;
     try {
       const stage = getBatchStage();
@@ -1580,9 +1673,7 @@
 
       if (isCompletePage()) {
         if (stage === STAGES.SUBMITTING_FINAL || stage === STAGES.COMPLETE) {
-          setBatchStage(STAGES.COMPLETE);
-          saveIeloveExecutionStatus("complete");
-          goToNextListing();
+          await handleCompletePage();
         }
       }
     } finally {
@@ -1593,14 +1684,14 @@
   let sendWatchdogTimer=null;
   function startBackgroundWatchdog() {
     if(sendWatchdogTimer){clearTimeout(sendWatchdogTimer);sendWatchdogTimer=null;}
-    if(!isBatchActive()||isCompletePage()||!currentUncertainSend())return;
+    if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend())return;
     const record=GM_getValue(FINAL_SEND_GUARD_KEY,null);
     if(!record||!Number.isFinite(Number(record.startedAt)))return;
     const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
     const remaining=Math.max(0,UNKNOWN_SEND_TIMEOUT_MS-(Date.now()-Number(record.startedAt)));
     sendWatchdogTimer=setTimeout(()=>{
       sendWatchdogTimer=null;
-      if(!isBatchActive()||isCompletePage()||!currentUncertainSend()||
+      if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend()||
          getBatchIndex()!==record.index||getBatchUrls()[record.index]!==record.url||
          GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
       // Deadline means UNKNOWN, not failed and not permission to retry.
@@ -3361,6 +3452,9 @@
     }
 
     if (!isBatchActive()) return;
+    if(isListingPage()){
+      if(!bindListingToTab())return rejectStaleTabPage();
+    }else if(!isCurrentTabItem())return rejectStaleTabPage();
     startBackgroundWatchdog();
     if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend())&&!isCompletePage()){
       if(!isConfirmPage())advanceUncertainSubmission("送信後に完了ページ以外の画面へ遷移しました");
