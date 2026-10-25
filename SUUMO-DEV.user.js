@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.1
+// @version      8.0.2
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -307,7 +307,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.1";
+  const SCRIPT_VERSION = "8.0.2";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -3097,6 +3097,189 @@
     el.textContent=message;
   }
 
+  // Ver.8.0.2: a stale global active flag must not be mistaken for proof that
+  // another tab is currently submitting. No automatic clearing of send claims.
+  const STALE_BATCH_RECOVERY_ID = "tm-stale-batch-recovery";
+  const BATCH_OWNER_PRESENCE_CHANNEL = "suumo-jj-advanced-owner-presence-v802";
+  let batchOwnerResponder = null;
+
+  function startBatchOwnerResponder() {
+    if (batchOwnerResponder || typeof BroadcastChannel !== "function") return;
+    try {
+      const channel = new BroadcastChannel(BATCH_OWNER_PRESENCE_CHANNEL);
+      channel.onmessage = event => {
+        const m = event.data;
+        if (m?.type !== "probe" || typeof m.nonce !== "string") return;
+        if (!isBatchOwnerTab() || !isAnyBatchActive()) return;
+        channel.postMessage({type:"alive",nonce:m.nonce,ownerToken:getTabOwnerToken()});
+      };
+      batchOwnerResponder = channel;
+    } catch (_) {}
+  }
+
+  async function checkLiveBatchOwner(expectedOwner) {
+    if (typeof BroadcastChannel !== "function") return null;
+    return new Promise(resolve => {
+      let channel=null, timer=null, settled=false;
+      const finish = answer => {
+        if(settled)return;
+        settled=true;
+        if(timer!==null)clearTimeout(timer);
+        try{channel?.close();}catch(_){}
+        resolve(answer);
+      };
+      try{
+        channel=new BroadcastChannel(BATCH_OWNER_PRESENCE_CHANNEL);
+        const nonce=createBatchOwnerToken();
+        channel.onmessage=event=>{
+          const m=event.data;
+          if(m?.type==="alive"&&m.nonce===nonce&&m.ownerToken===expectedOwner)finish(true);
+        };
+        timer=setTimeout(()=>finish(false),900);
+        channel.postMessage({type:"probe",nonce});
+      }catch(_){finish(null);}
+    });
+  }
+
+  // Fail closed if *any* sent-or-possibly-sent marker is present. Never
+  // interpret the age of a marker as permission to retry or reset it.
+  function batchRecoveryBlockReason() {
+    if (!isAnyBatchActive()) return "";
+    if (isBatchOwnerTab()) return "このタブが現在の申告処理の所有者です。元の処理画面で確認してください。";
+    const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    if (guard !== null && guard !== undefined) return "最終送信の確認履歴が残っています。送信結果を確認するまで復旧できません。";
+    try {
+      if (localStorage.getItem(SEND_CLAIM_STORAGE_KEY) !== null)
+        return "送信クリックの履歴が残っています。二重送信防止のため復旧できません。";
+      if (sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1")
+        return "このタブに結果不明の送信履歴があります。復旧できません。";
+    } catch (_) {
+      return "送信履歴の保存領域を確認できないため、安全に復旧できません。";
+    }
+    const stage=getBatchStage();
+    if ([STAGES.SUBMITTING_CONFIRM,STAGES.SUBMITTING_FINAL,STAGES.SEND_UNCERTAIN].includes(stage) ||
+        isSubmitting()) return "送信中または送信直前の状態です。受信状況の確認が必要です。";
+    const execution=GM_getValue(IELOVE_BATCH_EXECUTION_KEY,null);
+    if (Array.isArray(execution?.items) && execution.items.some(item=>
+        item?.status==="sending" || item?.status==="uncertain"))
+      return "一括申告の中に送信結果未確認の掲載があります。復旧できません。";
+    return "";
+  }
+
+  // A consciously initiated recovery is the only path which may clear an
+  // orphaned active flag. All profiles, search results, choices, diagnostics,
+  // claims and send guard data are intentionally preserved.
+  function clearConfirmedDormantBatch(ownerSnapshot) {
+    if (!isAnyBatchActive() || isBatchOwnerTab() ||
+        GM_getValue(BATCH_KEYS.ownerToken,"") !== ownerSnapshot ||
+        batchRecoveryBlockReason())return false;
+    GM_setValue(BATCH_KEYS.active,false);
+    GM_setValue(BATCH_KEYS.index,0);
+    GM_setValue(BATCH_KEYS.urls,[]);
+    GM_deleteValue(BATCH_KEYS.ownerToken);
+    GM_deleteValue(BATCH_KEYS.stage);
+    setSubmitting(false);
+    setConfirmReady(false);
+    setBatchError(false);
+    setFormReady(false);
+    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    GM_deleteValue(REPORT_RETRY_KEY);
+    // Deliberately leave the send claim, global send guard, and handoff alone.
+    return true;
+  }
+
+  function showStaleBatchRecoveryDialog() {
+    if (!isAuthorizedIeloveBatchSearch()) return;
+    document.getElementById(STALE_BATCH_RECOVERY_ID)?.remove();
+    const overlay=document.createElement("div");
+    overlay.id=STALE_BATCH_RECOVERY_ID;
+    overlay.style.cssText="position:fixed;inset:0;background:#0009;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Meiryo,sans-serif;color:#172634";
+    const card=document.createElement("div");
+    card.style.cssText="width:min(570px,94vw);max-height:90vh;overflow:auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 12px 40px #0005";
+    const title=document.createElement("h2");
+    title.textContent="一括検索を安全停止しました";
+    title.style.cssText="font-size:19px;margin:0 0 10px";
+    const summary=document.createElement("p");
+    summary.style.cssText="font-size:13px;line-height:1.7;white-space:pre-line";
+    const message=document.createElement("p");
+    message.style.cssText="font-size:13px;line-height:1.7;color:#9b2c22;white-space:pre-line";
+    const checkLabel=document.createElement("label");
+    checkLabel.style.cssText="display:flex;align-items:flex-start;gap:9px;font-size:13px;margin:12px 0";
+    const checkbox=document.createElement("input");
+    checkbox.type="checkbox";
+    const checkText=document.createElement("span");
+    checkText.textContent="他のSUUMOタブで一括申告が進行中でなく、未確認の申告送信もないことを確認しました。";
+    checkLabel.append(checkbox,checkText);
+    const actions=document.createElement("div");
+    actions.style.cssText="display:flex;gap:8px;flex-wrap:wrap";
+    const retry=document.createElement("button");
+    retry.textContent="保存状態を確認して検索を再開";
+    retry.style.cssText="flex:1;min-width:220px;padding:12px;border:0;border-radius:8px;background:#205375;color:#fff;font-weight:bold;cursor:pointer";
+    const close=document.createElement("button");
+    close.textContent="閉じる";
+    close.style.cssText="padding:12px 18px;border:1px solid #bcc5cf;border-radius:8px;background:#fff;cursor:pointer";
+    actions.append(retry,close);
+    card.append(title,summary,message,checkLabel,actions);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    const paint=()=>{
+      const active=isAnyBatchActive();
+      const urls=getBatchUrls();
+      const stage=getBatchStage();
+      const reason=batchRecoveryBlockReason();
+      summary.textContent="保存された一括申告： "+(active?"実行中フラグあり":"なし")+
+        "\n保存進捗： "+(active?(getBatchIndex()+1)+" / "+urls.length:"なし")+
+        "\n保存工程： "+(active?stage:"なし")+
+        "\n※別タブがまだ処理中かどうかは保存情報だけでは判断できません。";
+      message.textContent=reason || (active
+        ?"送信履歴の危険信号は見つかっていません。ただし、他のタブが本当に終了しているか確認が必要です。"
+        :"実行中の状態はありません。通常の検索を再開できます。");
+      checkLabel.style.display=active?"flex":"none";
+      retry.disabled=!!reason || (active&&!checkbox.checked);
+      retry.style.opacity=retry.disabled?"0.45":"1";
+    };
+    checkbox.onchange=paint;
+    close.onclick=()=>overlay.remove();
+    retry.onclick=async()=>{
+      if(retry.disabled)return;
+      retry.disabled=true;
+      const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+      if(isAnyBatchActive()){
+        if(!confirm("送信結果不明の案件がなく、他のSUUMOタブで一括申告が進行中でないことを確認しましたか？\n\n確認できない場合はキャンセルしてください。")){paint();return;}
+        const live=await checkLiveBatchOwner(owner);
+        if(live===true){
+          message.textContent="現在の申告タブから応答がありました。処理中のため復旧できません。";
+          paint();
+          return;
+        }
+        if(!navigator.locks?.request){
+          message.textContent="Web Locksが使えません。送信処理との排他確認ができないため復旧を中止しました。";
+          retry.disabled=true;
+          return;
+        }
+        let recovered=false;
+        try{
+          await navigator.locks.request(SEND_LOCK_NAME,{mode:"exclusive",ifAvailable:true},async lock=>{
+            if(!lock)return;
+            // Re-check after all waits while under the same lock used for POST.
+            if(batchRecoveryBlockReason())return;
+            if(GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
+            recovered=clearConfirmedDormantBatch(owner);
+          });
+        }catch(error){console.warn("[SUUMO JJ 上位版] 保存状態の復旧失敗",error);}
+        if(!recovered){
+          message.textContent="状態が変わったか送信保護が働いたため、保存状態を変更せず停止しました。";
+          paint();
+          return;
+        }
+      }
+      overlay.remove();
+      toast("申告の送信履歴・設定を保持したまま、検索を再開します。",3600);
+      if(isAuthorizedIeloveBatchSearch()&&!isAnyBatchActive())void collectIeloveSuumoResults();
+    };
+    paint();
+  }
+
   async function scanIeloveSuumoPages(searchUrl, propertyIndex, forceFetchFirst=false) {
     const scanStarted=performance.now();
     const target=parseSuumoRoomTarget(searchUrl);
@@ -3306,7 +3489,8 @@
             console.warn("[SUUMO JJ 上位版] 検索を安全停止:",error?.scanStateReason||"状態不一致");
             toast("検索の対象・実行状態が途中で切り替わりました。誤取得を防ぐため停止しました。"
               +"\n原因候補："+(error?.scanStateReason||"状態不一致")
-              +"\n複数タブと上位版の重複起動を確認してください。",12000);
+              +"\n実行状態が残っている場合は診断画面を確認してください。",12000);
+            if(error?.scanStateReason==="申告処理へ移行していた")showStaleBatchRecoveryDialog();
             return;
           }
           console.warn("[SUUMO JJ 上位版] 検索取得失敗",attempt+"/"+MAX_STAGE_ATTEMPTS,message);
@@ -3732,6 +3916,9 @@
 
     if (location.hostname !== "suumo.jp") return;
 
+    // Listen for a live owner even on tabs where the normal settings UI cannot
+    // initialize. Old owners without the responder still require user confirmation.
+    startBatchOwnerResponder();
     addMainButtons();
     if (!requireProfileManager()) return;
 
