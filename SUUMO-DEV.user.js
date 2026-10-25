@@ -1100,6 +1100,7 @@
     if (nextListingStarted || !isBatchActive()) return;
     if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
+    clearSendClaimForCurrent();
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
 
     const urls = getBatchUrls();
@@ -1128,7 +1129,7 @@
     setSubmitting(false);
     setConfirmReady(false);
     setFormReady(false);
-    clearReportRetry();
+    GM_deleteValue(REPORT_RETRY_KEY);
     setTimeout(() => { location.href = urls[index]; }, 150);
   }
 
@@ -1202,6 +1203,15 @@
   function readSendClaim(){
     return JSON.parse(localStorage.getItem(SEND_CLAIM_STORAGE_KEY)||"null");
   }
+  function clearSendClaimForCurrent(){
+    try{
+      const claim=readSendClaim(),index=getBatchIndex();
+      if(claim?.ownerToken===GM_getValue(BATCH_KEYS.ownerToken,"") &&
+         claim?.index===index&&claim?.url===getBatchUrls()[index]){
+        localStorage.removeItem(SEND_CLAIM_STORAGE_KEY);
+      }
+    }catch(error){console.warn("[SUUMO JJ 上位版] 送信履歴の整理に失敗",error);}
+  }
   function reportSendLockUnavailable(){
     setBatchError(true);
     // Do not move to the next listing or automatically retry a potentially active send.
@@ -1234,11 +1244,11 @@
     await sleep(250); // Keep the existing pre-send safety interval.
     if(!sameSubmissionTarget(preTarget)||confirmSendStarted||!sendLink.isConnected)return;
     // When Web Locks is absent, fail closed instead of depending on a shared GM flag.
-    if(!navigator.locks?.request||typeof localStorage?.getItem!=="function"){
-      reportSendLockUnavailable();
-      return;
-    }
     try{
+      if(!navigator.locks?.request||typeof localStorage?.getItem!=="function"){
+        reportSendLockUnavailable();
+        return;
+      }
       await navigator.locks.request(SEND_LOCK_NAME,{mode:"exclusive",ifAvailable:true},async lock=>{
         if(!lock){
           toast("別のタブが送信処理中のため、このタブでは送信しません",6000);
@@ -1276,8 +1286,9 @@
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
+    clearSendClaimForCurrent();
     GM_deleteValue(FINAL_SEND_GUARD_KEY);
-    clearReportRetry();
+    GM_deleteValue(REPORT_RETRY_KEY);
     setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
@@ -1344,7 +1355,10 @@
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
     GM_setValue(BATCH_SKIP_LOG_KEY,log);
     saveIeloveExecutionStatus(uncertain?"uncertain":"skipped");
-    if(uncertain)GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    if(uncertain){
+      clearSendClaimForCurrent();
+      GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    }
     const execution=getIeloveExecution();
     if(execution?.items[index]?.url===urls[index]){
       execution.items[index].skipReason=String(reason||"スキップ");
@@ -1516,7 +1530,8 @@
     try {
       const stage = getBatchStage();
       if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend()) && !isCompletePage()){
-        advanceUncertainSubmission("送信後の完了ページを確認できず、画面が復帰しました");
+        if(!isConfirmPage())advanceUncertainSubmission("送信後に完了ページ以外の画面へ遷移しました");
+        else startBackgroundWatchdog();
         return;
       }
 
@@ -1551,9 +1566,22 @@
     }
   }
 
+  let sendWatchdogTimer=null;
   function startBackgroundWatchdog() {
-    // 7.38: 常時setInterval監視は廃止。
-    // ブラウザから実行機会が戻ったイベント時だけ状態を照合する。
+    if(sendWatchdogTimer){clearTimeout(sendWatchdogTimer);sendWatchdogTimer=null;}
+    if(!isBatchActive()||isCompletePage()||!currentUncertainSend())return;
+    const record=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    if(!record||!Number.isFinite(Number(record.startedAt)))return;
+    const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const remaining=Math.max(0,UNKNOWN_SEND_TIMEOUT_MS-(Date.now()-Number(record.startedAt)));
+    sendWatchdogTimer=setTimeout(()=>{
+      sendWatchdogTimer=null;
+      if(!isBatchActive()||isCompletePage()||!currentUncertainSend()||
+         getBatchIndex()!==record.index||getBatchUrls()[record.index]!==record.url||
+         GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
+      // Deadline means UNKNOWN, not failed and not permission to retry.
+      advanceUncertainSubmission("最終送信後60秒以内に完了画面を確認できませんでした");
+    },remaining);
   }
 
   function startAutoAction(button, phase, strongColor, lightColor) {
@@ -3295,7 +3323,8 @@
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
     if((currentIeloveExecutionItem()?.status==="sending"||currentUncertainSend())&&!isCompletePage()){
-      advanceUncertainSubmission("送信後の完了画面を確認できませんでした");
+      if(!isConfirmPage())advanceUncertainSubmission("送信後に完了ページ以外の画面へ遷移しました");
+      else startBackgroundWatchdog();
       return;
     }
     updateBatchPanel();
