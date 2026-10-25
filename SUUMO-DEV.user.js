@@ -989,16 +989,40 @@
     GM_setValue(ISSUE_LOG_KEY,rows.slice(-300));
     console.warn("[SUUMO JJ 上位版] 問題記録",item);
   }
+  function safeIssuePhase(value){
+    const v=String(value||"");
+    if(v==="検索"||v==="最終送信"||v==="申告")return v;
+    return /^申告：(掲載確認|フォーム準備|内容確認へ移動|掲載リンク取得|最終送信ボタン取得)$/.test(v)?v:"申告";
+  }
+  function safeIssueCategory(value){
+    const known=["検索結果0件","住戸条件一致0件・掲載会社0件","検索・会社情報取得失敗",
+      "処理失敗","フォーム取得・入力失敗","送信結果不明","掲載終了",
+      "送信安全機構の使用不可"];
+    return known.includes(String(value))?String(value):"処理エラー";
+  }
+  function safeIssueAction(value){
+    const known=["即時自動スキップ","再検索せず自動スキップ","最大3回試行後スキップ",
+      "3回試行後スキップ","自動スキップ","要確認・自動再送信せず次へ",
+      "自動送信停止・要確認","スキップ","要確認"];
+    return known.includes(String(value))?String(value):"要確認";
+  }
+  function validIssueDate(value){
+    const v=String(value||"");return /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(v)?v.slice(0,24):"日時不明";
+  }
   function formatIssueReport(rows){
     return ["【SUUMO JJ 上位版 エラー報告】","バージョン："+SCRIPT_VERSION,
       "問題件数："+rows.length+"件","※詳細欄は固定の診断文のみ。任意の入力値や認証情報は含みません。",
       "※送信結果不明の掲載は自動再送信していません。",
       ...rows.flatMap((item,i)=>[
         "","━━━━━━━━━━━━━━━━","【問題 "+(i+1)+"】",
-        "工程："+item.phase,"対象："+item.index+"件目",
-        "種類："+item.kind,"対応："+item.action,
-        "試行回数："+item.attempts,"発生日時："+item.at,
-        ...(item.url?["掲載URL："+item.url]:[]),"詳細："+item.detail
+        "工程："+safeIssuePhase(item.phase),
+        "対象："+(Math.max(0,Number(item.index)||0))+"件目",
+        "種類："+(safeIssueCategory(item.kind)||"処理エラー"),
+        "対応："+(safeIssueAction(item.action)||"要確認"),
+        "試行回数："+(Math.max(0,Number(item.attempts)||0)),
+        "発生日時："+(validIssueDate(item.at)),
+        ...(publicListingUrl(item.url)?["掲載URL："+publicListingUrl(item.url)]:[]),
+        "詳細："+safeIssueDetail(item.detail)
       ])].join("\n");
   }
   function openIssueResults(){
@@ -1017,9 +1041,9 @@
     for(const [i,item] of rows.entries()){
       const row=document.createElement("div");
       row.style.cssText="border-top:1px solid #e1e5ec;padding:12px 0;font-size:13px;white-space:pre-line;overflow-wrap:anywhere";
-      row.textContent=(i+1)+". "+item.phase+" "+item.index+"件目｜"+item.kind+
-        "\n"+item.action+"｜試行 "+item.attempts+"回"+
-        (item.url?"\n"+item.url:"")+"\n"+item.detail;
+      row.textContent=(i+1)+". "+safeIssuePhase(item.phase)+" "+Number(item.index)+"件目｜"+safeIssueCategory(item.kind)+
+        "\n"+safeIssueAction(item.action)+"｜試行 "+(Math.max(0,Number(item.attempts)||0))+"回"+
+        (publicListingUrl(item.url)?"\n"+publicListingUrl(item.url):"")+"\n"+safeIssueDetail(item.detail);
       panel.appendChild(row);
     }
     const actions=document.createElement("div");
