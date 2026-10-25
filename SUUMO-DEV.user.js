@@ -97,7 +97,8 @@
     INPUT_CONFIRM: "input-confirm",
     SUBMITTING_CONFIRM: "submitting-confirm",
     SUBMITTING_FINAL: "submitting-final",
-    COMPLETE: "complete"
+    COMPLETE: "complete",
+    SEND_UNCERTAIN: "send-uncertain"
   });
 
   function getBatchStage() {
@@ -1170,7 +1171,7 @@
   function safeIssueAction(value){
     const known=["即時自動スキップ","再検索せず自動スキップ","最大3回試行後スキップ",
       "3回試行後スキップ","自動スキップ","要確認・自動再送信せず次へ",
-      "自動送信停止・要確認","スキップ","要確認"];
+      "自動送信停止・要確認","結果確認まで自動進行停止","スキップ","要確認"];
     return known.includes(String(value))?String(value):"要確認";
   }
   function validIssueDate(value){
@@ -1282,13 +1283,23 @@
     const record=GM_getValue(FINAL_SEND_GUARD_KEY,null),index=getBatchIndex();
     return record?.status==="sending"&&record.index===index&&record.url===getBatchUrls()[index];
   }
+  // A timed-out POST is not a failed POST. Never send a second listing in this
+  // tab while a delayed completion from the first could still arrive.
   function advanceUncertainSubmission(detail){
-    if(!isCurrentTabSent())return false;
+    if(!isCurrentTabSent()||getBatchStage()===STAGES.SEND_UNCERTAIN)return false;
     const item=currentIeloveExecutionItem();
     if((item?.status!=="sending"&&!currentUncertainSend())||nextListingStarted)return false;
     recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
-      action:"要確認・自動再送信せず次へ",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
-    return advancePastSkippedListing("送信結果不明",true);
+      action:"結果確認まで自動進行停止",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
+    setBatchStage(STAGES.SEND_UNCERTAIN);
+    setSubmitting(false);
+    setConfirmReady(false);
+    setBatchError(true);
+    cancelAutoAction(false);
+    saveIeloveExecutionStatus("uncertain");
+    updateBatchPanel();
+    toast("安全停止：最終送信の結果が確認できません。\\n前の物件の完了画面を次の物件と誤認しないため、一括処理を停止しています。\\n二重送信を避け、SUUMOの受信状況を確認してください。",11000);
+    return true;
   }
 
   let nextListingStarted = false;
@@ -1501,7 +1512,15 @@
     if (!isBatchActive()) return;
     if(!isCurrentTabSent())return rejectStaleTabPage();
     const stage = getBatchStage();
-    if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE) return;
+    if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE &&
+        stage !== STAGES.SEND_UNCERTAIN) return;
+    // A late completion is safe to associate only with the SAME active item
+    // and same persisted POST ID; isCurrentTabSent() checks both.
+    if(stage===STAGES.SEND_UNCERTAIN){
+      const id="最終送信:"+(getBatchIndex()+1),url=getBatchUrls()[getBatchIndex()];
+      GM_setValue(ISSUE_LOG_KEY,issueList().filter(row=>
+        !(row.id===id && row.kind==="送信結果不明" && row.url===publicListingUrl(url))));
+    }
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
