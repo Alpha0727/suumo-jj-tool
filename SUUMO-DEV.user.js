@@ -83,6 +83,7 @@
   const UNKNOWN_SEND_TIMEOUT_MS = 60000;
   const TAB_ITEM_CONTEXT_KEY = "suumo_advanced_tab_item_context_v1";
   const TAB_SENT_CONTEXT_KEY = "suumo_advanced_tab_sent_context_v1";
+  const TAB_UNCERTAIN_SEND_KEY = "suumo_advanced_unresolved_send_tab_v1";
   const PAGE_HISTORY_STATE_KEY = "__suumoJjAdvancedPageContext";
   const PAGE_NAV_TICKET_KEY = "suumo_advanced_page_transition_v1";
   const PAGE_ACTIVE_ENTRY_KEY = "suumo_advanced_active_history_entry_v1";
@@ -805,6 +806,14 @@
   }
 
   function setBatch(urls, index = 0, source = "regular") {
+    // A previous POST can still navigate this tab after a timeout.
+    // Quarantine this browser tab even if the operator stopped the old batch.
+    let sameTabHasUnresolvedPost=true;
+    try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
+    if(sameTabHasUnresolvedPost){
+      toast("安全停止：このタブには結果未確認の送信があります。\\nSUUMOで受信状況を確認し、このタブを閉じて新しいタブで一括処理を始めてください。",11000);
+      return false;
+    }
     if (!requireProfileManager()) return false;
     if (source !== "ielove") {
       GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
@@ -1291,6 +1300,8 @@
     if((item?.status!=="sending"&&!currentUncertainSend())||nextListingStarted)return false;
     recordIssue({phase:"最終送信",index:getBatchIndex()+1,kind:"送信結果不明",
       action:"結果確認まで自動進行停止",detail,attempts:1,url:getBatchUrls()[getBatchIndex()]});
+    // Do not let a later batch reuse this same tab while the old POST may finish.
+    try{sessionStorage.setItem(TAB_UNCERTAIN_SEND_KEY,"1");}catch(_){}
     setBatchStage(STAGES.SEND_UNCERTAIN);
     setSubmitting(false);
     setConfirmReady(false);
@@ -1521,6 +1532,8 @@
       GM_setValue(ISSUE_LOG_KEY,issueList().filter(row=>
         !(row.id===id && row.kind==="送信結果不明" && row.url===publicListingUrl(url))));
     }
+    // The completion passed the same-item, same-POST verification.
+    try{sessionStorage.removeItem(TAB_UNCERTAIN_SEND_KEY);}catch(_){}
     setBatchStage(STAGES.COMPLETE);
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
@@ -1960,12 +1973,15 @@
       statusBackground = "#eaf3ff";
     }
 
-    const uncertainSend = currentIeloveExecutionItem()?.status === "sending" && !isCompletePage();
+    const uncertainSend = !isCompletePage() && (
+      getBatchStage()===STAGES.SEND_UNCERTAIN || currentUncertainSend() ||
+      currentIeloveExecutionItem()?.status==="sending"
+    );
     if (uncertainSend) {
       statusText = "⚠ 最終送信を開始済みですが、完了を確認できていません。二重送信防止のため停止しています。";
       statusBackground = "#fff1f0";
     }
-    const canSubmit = isInputPage() && !submitting && formReady && !uncertainSend;
+    const canSubmit = isInputPage() && !submitting && !batchError && formReady && !uncertainSend;
     let mainButton = "";
 
     if (canSubmit) {
@@ -1994,7 +2010,7 @@
       <div style="font-size:13px;background:${statusBackground};padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;">${escapeHtml(statusText)}</div>
       ${mainButton}
       <div style="display:flex;gap:7px;">
-        <button id="tm-skip-item" ${submitting ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting ? "default" : "pointer"};">スキップ</button>
+        <button id="tm-skip-item" ${submitting||uncertainSend ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting||uncertainSend ? "default" : "pointer"};">スキップ</button>
         <button id="tm-stop-batch" style="flex:1;padding:8px;cursor:pointer;">中止</button>
       </div>`;
 
@@ -2020,7 +2036,7 @@
     if (retryCurrent) retryCurrent.onclick = retryCurrentListing;
 
      const skip = document.getElementById("tm-skip-item");
-    if (skip && !submitting) {
+    if (skip && !submitting && !uncertainSend) {
       skip.onclick = () => {
         cancelAutoAction(false);
         autoActionCancelledPhase = null;
