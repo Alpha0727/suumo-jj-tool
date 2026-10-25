@@ -3222,6 +3222,7 @@
     card.append(title,summary,message,checkLabel,actions);
     overlay.appendChild(card);
     document.body.appendChild(overlay);
+    let additionalWarning="";
     const paint=()=>{
       const active=isAnyBatchActive();
       const urls=getBatchUrls();
@@ -3231,7 +3232,7 @@
         "\n保存進捗： "+(active?(getBatchIndex()+1)+" / "+urls.length:"なし")+
         "\n保存工程： "+(active?stage:"なし")+
         "\n※別タブがまだ処理中かどうかは保存情報だけでは判断できません。";
-      message.textContent=reason || (active
+      message.textContent=additionalWarning || reason || (active
         ?"送信履歴の危険信号は見つかっていません。ただし、他のタブが本当に終了しているか確認が必要です。"
         :"実行中の状態はありません。通常の検索を再開できます。");
       checkLabel.style.display=active?"flex":"none";
@@ -3243,17 +3244,18 @@
     retry.onclick=async()=>{
       if(retry.disabled)return;
       retry.disabled=true;
+      additionalWarning="";
       const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
       if(isAnyBatchActive()){
         if(!confirm("送信結果不明の案件がなく、他のSUUMOタブで一括申告が進行中でないことを確認しましたか？\n\n確認できない場合はキャンセルしてください。")){paint();return;}
         const live=await checkLiveBatchOwner(owner);
         if(live===true){
-          message.textContent="現在の申告タブから応答がありました。処理中のため復旧できません。";
+          additionalWarning="現在の申告タブから応答がありました。処理中のため復旧できません。";
           paint();
           return;
         }
         if(!navigator.locks?.request){
-          message.textContent="Web Locksが使えません。送信処理との排他確認ができないため復旧を中止しました。";
+          additionalWarning="Web Locksが使えません。送信処理との排他確認ができないため復旧を中止しました。";
           retry.disabled=true;
           return;
         }
@@ -3268,7 +3270,7 @@
           });
         }catch(error){console.warn("[SUUMO JJ 上位版] 保存状態の復旧失敗",error);}
         if(!recovered){
-          message.textContent="状態が変わったか送信保護が働いたため、保存状態を変更せず停止しました。";
+          additionalWarning="状態が変わったか送信保護が働いたため、保存状態を変更せず停止しました。";
           paint();
           return;
         }
