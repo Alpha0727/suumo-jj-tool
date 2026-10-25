@@ -174,6 +174,17 @@
     return !!now&&!!ctx&&ctx.ownerToken===now.ownerToken&&
       ctx.index===now.index&&ctx.url===now.url&&!!ctx.id;
   }
+  // Delayed navigation belongs to the batch, item and document that scheduled it.
+  function captureBatchTask(){
+    const identity=currentBatchIdentity(),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    return identity&&item?{...identity,itemId:item.id,pageUrl:location.href,entryId:pageStamp()?.entryId||""}:null;
+  }
+  function batchTaskStillCurrent(task){
+    const identity=currentBatchIdentity(),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    return !!task&&!!identity&&task.ownerToken===identity.ownerToken&&
+      task.index===identity.index&&task.url===identity.url&&task.itemId===item?.id&&
+      task.pageUrl===location.href&&task.entryId===(pageStamp()?.entryId||"");
+  }
   function currentPageKind(){
     if(/^\/chintai\/bc_/i.test(location.pathname))return "listing";
     if(location.pathname.includes("/jj/chintai/shiryou/FR400FG001/"))return "input";
@@ -222,7 +233,9 @@
     try{ticket=JSON.parse(sessionStorage.getItem(PAGE_NAV_TICKET_KEY)||"null");}catch(_){}
     if(!ticket)return false;
     const age=Date.now()-Number(ticket.at);
-    if(age<0||age>PAGE_TICKET_MAX_AGE_MS)return false;
+    // An unresolved POST may finish after the ordinary navigation-ticket TTL.
+    // Its exact persisted send ID is still required below and by isCurrentTabSent().
+    if(!Number.isFinite(age)||age<0||(kind!=="complete"&&age>PAGE_TICKET_MAX_AGE_MS))return false;
     if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
     if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
        ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
@@ -810,8 +823,9 @@
     // Quarantine this browser tab even if the operator stopped the old batch.
     let sameTabHasUnresolvedPost=true;
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
-    if(sameTabHasUnresolvedPost){
-      toast("安全停止：このタブには結果未確認の送信があります。\nSUUMOで受信状況を確認し、このタブを閉じて新しいタブで一括処理を始めてください。",11000);
+    const unresolvedPost=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
+      toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
       return false;
     }
     if (!requireProfileManager()) return false;
@@ -1280,8 +1294,9 @@
     setSubmitting(false);setConfirmReady(false);setBatchError(false);setFormReady(false);
     setBatchStage(STAGES.LISTING);
     toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
+    const task=captureBatchTask();
     setTimeout(()=>{
-      if(!isBatchActive()||getBatchIndex()!==index||getBatchUrls()[index]!==url)return;
+      if(!batchTaskStillCurrent(task))return;
       if(!queuePageTransition("listing"))return;
       location.href=url;
     },RETRY_WAIT_MS);
@@ -1353,7 +1368,8 @@
     setConfirmReady(false);
     setFormReady(false);
     GM_deleteValue(REPORT_RETRY_KEY);
-    setTimeout(() => { location.href = urls[index]; }, 150);
+    const task=captureBatchTask();
+    setTimeout(() => { if(batchTaskStillCurrent(task))location.href = urls[index]; }, 150);
   }
 
   // 入力完了後は独自の二段階確認を挟まず、SUUMO本来の内容確認画面へ進む。
@@ -1501,6 +1517,8 @@
           reportSendLockUnavailable();
           return;
         }
+        // Quarantine from the first click, including the interval before timeout.
+        sessionStorage.setItem(TAB_UNCERTAIN_SEND_KEY,"1");
         confirmSendStarted=true;
         GM_setValue(FINAL_SEND_GUARD_KEY,{...marker,status:"sending",startedAt:marker.at});
         saveIeloveExecutionStatus("sending");
@@ -1522,6 +1540,12 @@
   async function handleCompletePage() {
     if (!isBatchActive()) return;
     if(!isCurrentTabSent())return rejectStaleTabPage();
+    // A completion URL with an explicit HTTP error is not a confirmed POST result.
+    const responseStatus=Number(performance.getEntriesByType?.("navigation")?.[0]?.responseStatus);
+    if(Number.isFinite(responseStatus)&&responseStatus>=400){
+      advanceUncertainSubmission("完了画面の取得 HTTP "+responseStatus+"：送信結果を確認できませんでした");
+      return;
+    }
     const stage = getBatchStage();
     if (stage !== STAGES.SUBMITTING_FINAL && stage !== STAGES.COMPLETE &&
         stage !== STAGES.SEND_UNCERTAIN) return;
@@ -1581,8 +1605,9 @@
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
     if(!queuePageTransition("listing"))return rejectStaleTabPage();
+    const task=captureBatchTask();
     setTimeout(() => {
-      location.href = currentUrl;
+      if(batchTaskStillCurrent(task))location.href = currentUrl;
     }, 500);
   }
 
@@ -1682,8 +1707,19 @@
 
 
   function stopBatch() {
-    const ok = confirm("一括処理を中止しますか？\n\n進捗はリセットされます。");
+    if(!isBatchActive()||!isCurrentTabItem())return rejectStaleTabPage();
+    const ok = confirm(currentUncertainSend()
+      ? "送信結果が未確認です。送信履歴を保持して自動処理を停止しますか？"
+      : "一括処理を中止しますか？\n\n進捗はリセットされます。");
     if (!ok) return;
+    if(!isBatchActive()||!isCurrentTabItem())return rejectStaleTabPage();
+    if(currentUncertainSend()){
+      advanceUncertainSubmission("中止操作時に送信結果を確認できませんでした");
+      cancelAutoAction(false);
+      updateBatchPanel();
+      toast("送信結果が未確認のため、送信履歴を保持して停止しています。再送信せず受信状況を確認してください。",11000);
+      return;
+    }
     clearBatch();
     document.getElementById("tm-batch-status")?.remove();
     toast("一括処理を中止しました");
@@ -1973,10 +2009,9 @@
       statusBackground = "#eaf3ff";
     }
 
-    const uncertainSend = !isCompletePage() && (
-      getBatchStage()===STAGES.SEND_UNCERTAIN || currentUncertainSend() ||
-      currentIeloveExecutionItem()?.status==="sending"
-    );
+    const uncertainSend = getBatchStage()===STAGES.SEND_UNCERTAIN || (!isCompletePage() && (
+      currentUncertainSend() || currentIeloveExecutionItem()?.status==="sending"
+    ));
     if (uncertainSend) {
       statusText = "⚠ 最終送信を開始済みですが、完了を確認できていません。二重送信防止のため停止しています。";
       statusBackground = "#fff1f0";
