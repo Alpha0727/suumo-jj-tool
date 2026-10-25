@@ -153,6 +153,7 @@
     try{
       sessionStorage.removeItem(TAB_ITEM_CONTEXT_KEY);
       sessionStorage.removeItem(TAB_SENT_CONTEXT_KEY);
+      sessionStorage.removeItem(PAGE_NAV_TICKET_KEY);
     }catch(_){}
   }
   function currentBatchIdentity(){
@@ -268,8 +269,9 @@
     const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
     const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
     return isCurrentTabItem()&&ctx?.itemId===item?.id&&
-      ctx?.id&&ctx.id===guard?.id&&pageStamp()?.sendId===ctx.id&&
-      pageStamp()?.kind==="complete"&&ctx.index===guard.index&&
+      ctx?.id&&ctx.id===guard?.id&&
+      (pageStamp()?.kind!=="complete"||pageStamp()?.sendId===ctx.id)&&
+      ctx.index===guard.index&&
       ctx.url===guard.url&&ctx.ownerToken===guard.ownerToken&&
       guard.status==="sending";
   }
