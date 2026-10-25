@@ -811,7 +811,7 @@
     let sameTabHasUnresolvedPost=true;
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
     if(sameTabHasUnresolvedPost){
-      toast("安全停止：このタブには結果未確認の送信があります。\\nSUUMOで受信状況を確認し、このタブを閉じて新しいタブで一括処理を始めてください。",11000);
+      toast("安全停止：このタブには結果未確認の送信があります。\nSUUMOで受信状況を確認し、このタブを閉じて新しいタブで一括処理を始めてください。",11000);
       return false;
     }
     if (!requireProfileManager()) return false;
@@ -1309,7 +1309,7 @@
     cancelAutoAction(false);
     saveIeloveExecutionStatus("uncertain");
     updateBatchPanel();
-    toast("安全停止：最終送信の結果が確認できません。\\n前の物件の完了画面を次の物件と誤認しないため、一括処理を停止しています。\\n二重送信を避け、SUUMOの受信状況を確認してください。",11000);
+    toast("安全停止：最終送信の結果が確認できません。\n前の物件の完了画面を次の物件と誤認しないため、一括処理を停止しています。\n二重送信を避け、SUUMOの受信状況を確認してください。",11000);
     return true;
   }
 
