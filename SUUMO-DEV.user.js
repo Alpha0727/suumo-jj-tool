@@ -3110,7 +3110,7 @@
       channel.onmessage = event => {
         const m = event.data;
         if (m?.type !== "probe" || typeof m.nonce !== "string") return;
-        if (!isBatchOwnerTab() || !isAnyBatchActive()) return;
+        if (!isBatchOwnerTab() || !isAnyBatchActive() || !isCurrentTabItem()) return;
         channel.postMessage({type:"alive",nonce:m.nonce,ownerToken:getTabOwnerToken()});
       };
       batchOwnerResponder = channel;
@@ -3145,7 +3145,7 @@
   // interpret the age of a marker as permission to retry or reset it.
   function batchRecoveryBlockReason() {
     if (!isAnyBatchActive()) return "";
-    if (isBatchOwnerTab()) return "このタブが現在の申告処理の所有者です。元の処理画面で確認してください。";
+    if (isBatchOwnerTab() && isCurrentTabItem()) return "このタブが現在の申告処理の所有者です。元の処理画面で確認してください。";
     const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
     if (guard !== null && guard !== undefined) return "最終送信の確認履歴が残っています。送信結果を確認するまで復旧できません。";
     try {
@@ -3170,7 +3170,7 @@
   // orphaned active flag. All profiles, search results, choices, diagnostics,
   // claims and send guard data are intentionally preserved.
   function clearConfirmedDormantBatch(ownerSnapshot) {
-    if (!isAnyBatchActive() || isBatchOwnerTab() ||
+    if (!isAnyBatchActive() || (isBatchOwnerTab() && isCurrentTabItem()) ||
         GM_getValue(BATCH_KEYS.ownerToken,"") !== ownerSnapshot ||
         batchRecoveryBlockReason())return false;
     GM_setValue(BATCH_KEYS.active,false);
@@ -3922,6 +3922,12 @@
     addMainButtons();
     if (!requireProfileManager()) return;
 
+    if (isAuthorizedIeloveBatchSearch() && isAnyBatchActive()) {
+      // A stale owner token in this same search tab used to suppress all
+      // recovery UI. Only actual stamped listing/form pages own an active item.
+      showStaleBatchRecoveryDialog();
+      return;
+    }
     if (!isBatchActive() && isAuthorizedIeloveBatchSearch()) {
       await collectIeloveSuumoResults();
     }
