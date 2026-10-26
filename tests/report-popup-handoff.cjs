@@ -1,147 +1,107 @@
-// SUUMO listing -> new report popup handoff regression.
+// Regression for the v8.0.2-style shared live execution model.
 // Run: node --test tests/report-popup-handoff.cjs
-// Synthetic sessionStorage and opener only; no live SUUMO requests or POST.
+// No real website requests, login, form input, or POST.
 "use strict";
-const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),
-  vm=require("node:vm"),path=require("node:path");
-const src=fs.readFileSync(path.join(__dirname,"..","SUUMO-DEV.user.js"),"utf8");
-const begin=src.indexOf("  function acceptReportPopupHandoff()");
-const end=src.indexOf("  // A window.open tab starts with a COPY",begin);
-assert.ok(begin>0&&end>begin,"Production popup-handoff helper missing");
-const helper=src.slice(begin,end);
-function scenario(opts={}){
- const prefix="suumo_advanced_tab_runtime_v1_";
- const storageKey="suumo_advanced_browser_tab_identity_v1";
- const contextKey="suumo_advanced_tab_item_context_v1";
- const ticketKey="suumo_advanced_page_transition_v1";
- const ownerKey="suumo_batch_tab_owner_token";
- const batchKey="batch-owner",listing="https://suumo.jp/chintai/bc_123456789/";
- function makeStorage(state=new Map()){
-  return {get length(){return state.size},key:i=>[...state.keys()][i]||null,
-   getItem:k=>state.get(k)??null,setItem:(k,v)=>state.set(k,String(v)),
-   removeItem:k=>state.delete(k),state};
- }
- const parent=makeStorage(),child=makeStorage();
- parent.setItem(storageKey,"parent-tab");
- parent.setItem(ownerKey,batchKey);
- for(const [key,value] of Object.entries({
-  suumo_batch_active:true,suumo_batch_urls:[listing],suumo_batch_index:0,
-  suumo_batch_owner_token:batchKey,suumo_batch_stage:opts.stage||"listing",
-  suumo_batch_submitting:false,suumo_advanced_final_send_guard_v1:opts.guard||null
- }))parent.setItem(prefix+key,JSON.stringify(value));
- parent.setItem(contextKey,JSON.stringify({ownerToken:batchKey,index:0,url:listing,id:"item-1"}));
- parent.setItem(ticketKey,JSON.stringify({
-  kind:opts.ticketKind||"input",ownerToken:batchKey,index:0,url:listing,
-  itemId:"item-1",at:Date.now()-(opts.expired?200000:300)
- }));
- if(opts.cloned!==false)for(const [key,value] of parent.state)child.setItem(key,value);
- const input="https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=123456789";
- if(opts.revokeFails){const set=parent.setItem;parent.setItem=(k,v)=>{if(k===prefix+'suumo_batch_active'&&v==='false')throw Error('synthetic parent write failure');return set(k,v)}}
- if(opts.childFailsKey){const set=child.setItem;child.setItem=(k,v)=>{if(k===opts.childFailsKey)throw Error('synthetic child write failure');return set(k,v)}}
- const opener={closed:false,name:"parent-tab",sessionStorage:parent,
-  location:{origin:"https://suumo.jp",pathname:opts.parentPath||"/chintai/bc_123456789/"},
-  document:{querySelector:()=>opts.missingLink?null:{getAttribute:k=>k==='href'?(opts.linkHref||input):null}}};
- const browserWindow={opener:opts.noOpener?null:opener,name:""};
- const context={
-  URL,window:browserWindow,sessionStorage:child,location:{origin:"https://suumo.jp",href:opts.childHref||input},
-  BATCH_KEYS:{active:"suumo_batch_active",urls:"suumo_batch_urls",index:"suumo_batch_index",
-   ownerToken:"suumo_batch_owner_token",stage:"suumo_batch_stage",submitting:"suumo_batch_submitting"},
-  TAB_RUNTIME_PREFIX:prefix,TAB_WINDOW_ID_KEY:storageKey,TAB_OWNER_TOKEN_KEY:ownerKey,
-  TAB_ITEM_CONTEXT_KEY:contextKey,TAB_SENT_CONTEXT_KEY:"sent",TAB_UNCERTAIN_SEND_KEY:"uncertain",
-  PAGE_NAV_TICKET_KEY:ticketKey,PAGE_ACTIVE_ENTRY_KEY:"active-entry",
-  SEND_CLAIM_STORAGE_KEY:"send-claim",FAST_REPORT_NAV_KEY:"fast-nav",
-  FINAL_SEND_GUARD_KEY:"suumo_advanced_final_send_guard_v1",PAGE_TICKET_MAX_AGE_MS:90000,
-  STAGES:{LISTING:"listing"},isInputPage:()=>!opts.notInput,
-  createBatchOwnerToken:()=>"fresh-unique-child",failTabRuntime:()=>{}
- };
- vm.createContext(context);
- vm.runInContext(helper+"\nglobalThis.acceptPopup=acceptReportPopupHandoff;",context);
- return {run:()=>context.acceptPopup(),parent,child,browserWindow,prefix,storageKey};
+const {test}=require("node:test");
+const assert=require("node:assert/strict");
+const fs=require("node:fs"),path=require("node:path"),vm=require("node:vm");
+const source=fs.readFileSync(path.join(__dirname,"..","SUUMO-DEV.user.js"),"utf8");
+function extract(name) {
+ const start=source.indexOf("  function "+name+"(");
+ assert.ok(start>=0,name+" not found");
+ const end=source.indexOf("\n  }\n",start);
+ assert.ok(end>start,name+" end not found");
+ return source.slice(start,end+5);
 }
-for(const cloned of [true,false])test("Legitimate SUUMO input popup "+(cloned?"copies":"reads")+" active listing state",()=>{
- const f=scenario({cloned});
- assert.equal(f.run(),true);
- assert.equal(f.child.getItem(f.prefix+"suumo_batch_active"),"true");
- assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"false");
- assert.equal(f.browserWindow.name,f.child.getItem(f.storageKey));
- assert.notEqual(f.browserWindow.name,"parent-tab");
- assert.ok(f.child.getItem("suumo_advanced_page_transition_v1"));
+const functions=["validTabRuntimeValue","tabGet","tabSet","tabDelete","isBatchOwnerTab","isBatchActive","isAnyBatchActive"];
+const runtime=functions.map(extract).join("\n");
+function fixture(storage=new Map(),tabState=new Map(),blocked=false) {
+ const globalStore={
+  get:(k,def)=>storage.has(k)?structuredClone(storage.get(k)):def,
+  set:(k,v)=>{if(blocked)throw Error("blocked");storage.set(k,structuredClone(v));},
+  remove:k=>{if(blocked)throw Error("blocked");storage.delete(k);}
+ };
+ let warning=0;
+ const ctx={
+  GM_getValue:globalStore.get,GM_setValue:globalStore.set,GM_deleteValue:globalStore.remove,
+  sessionStorage:{getItem:k=>tabState.get(k)||null,setItem:(k,v)=>tabState.set(k,String(v)),removeItem:k=>tabState.delete(k)},
+  BATCH_KEYS:{active:"suumo_batch_active",ownerToken:"suumo_batch_owner_token",urls:"suumo_batch_urls",index:"suumo_batch_index"},
+  TAB_OWNER_TOKEN_KEY:"suumo_batch_tab_owner_token",
+  failTabRuntime:()=>{warning++},
+  getTabOwnerToken:()=>tabState.get("suumo_batch_tab_owner_token")||"",
+  tabRuntimeFault:false
+ };
+ vm.createContext(ctx);
+ vm.runInContext(runtime+"\nglobalThis.runtime = {get:tabGet,set:tabSet,del:tabDelete,active:isBatchActive,anyActive:isAnyBatchActive,owner:isBatchOwnerTab};",ctx);
+ return {api:ctx.runtime,global:storage,tab:tabState,warnings:()=>warning};
+}
+test("UI is initialized before any progress check in the real SUUMO entry point",()=>{
+ const init=source.slice(source.indexOf("  async function init()"),source.lastIndexOf("\n  init();"));
+ const pos=init.indexOf('if (location.hostname !== "suumo.jp") return;');
+ const ui=init.indexOf("addMainButtons();",pos);
+ const gate=init.indexOf("if (tabRuntimeFault) return;",pos);
+ assert.ok(pos>=0&&ui>pos&&gate>ui);
+ assert.doesNotMatch(init,/discardOpenedTabRuntime/);
 });
-for(const [name,config] of [
- ["non-input popup",{notInput:true}],
- ["missing opener",{noOpener:true}],
- ["unrelated listing",{parentPath:"/chintai/bc_987654321/"}],
- ["no actual listing link",{missingLink:true}],
- ["expired transition ticket",{expired:true}],
- ["confirmation ticket",{ticketKind:"confirm"}],
- ["unresolved sending guard",{guard:{status:"sending"}}],
- ["not in listing stage",{stage:"submitting-final"}]
-])test("Reject "+name+" without changing original tab",()=>{
- const f=scenario(config);
- assert.equal(f.run(),false);
- assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
+test("No strict window.name or popup-state rejection remains",()=>{
+ assert.doesNotMatch(source,/discardOpenedTabRuntime|acceptReportPopupHandoff|TAB_WINDOW_ID_KEY|TAB_RUNTIME_PREFIX/);
+ assert.doesNotMatch(source,/showStaleBatchRecoveryDialog\(/);
 });
-// Observed in Chrome: the listing link is href="#" (no inline onclick),
-// while the JavaScript handler opens the shared parameter-free SUUMO form.
-const jsInput="https://suumo.jp/jj/chintai/shiryou/FR400FG001/";
-for(const cloned of [true,false])test("SUUMO href=# popup "+(cloned?"copied":"empty")+" sessionStorage inherits active item",()=>{
- const f=scenario({cloned,linkHref:"#",childHref:jsInput});
- assert.equal(f.run(),true);
- assert.equal(f.child.getItem(f.prefix+"suumo_batch_active"),"true");
- assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"false");
- assert.equal(f.browserWindow.name,f.child.getItem(f.storageKey));
+test("GM shared execution permits real separate report tab with same owner token",()=>{
+ const GM=new Map(),original=new Map([["suumo_batch_tab_owner_token","live-owner"]]);
+ const sourceTab=fixture(GM,original),report=fixture(GM,new Map(original));
+ sourceTab.api.set("suumo_batch_owner_token","live-owner");
+ sourceTab.api.set("suumo_batch_active",true);
+ sourceTab.api.set("suumo_batch_urls",["https://suumo.jp/chintai/bc_100531168931/"]);
+ assert.equal(report.api.active(),true);
+ report.api.set("suumo_batch_index",0);
+ assert.deepEqual(sourceTab.api.get("suumo_batch_urls",[]),["https://suumo.jp/chintai/bc_100531168931/"]);
 });
-for(const [name,config] of [
- ["unexpected query",{linkHref:"#",childHref:jsInput+"?bc=987654321"}],
- ["unexpected hash",{linkHref:"#",childHref:jsInput+"#redirect"}],
- ["wrong input path",{linkHref:"#",childHref:"https://suumo.jp/jj/chintai/shiryou/FR400FG002/"}],
- ["external origin",{linkHref:"#",childHref:"https://example.com/jj/chintai/shiryou/FR400FG001/"}],
- ["other fragment",{linkHref:"#form",childHref:jsInput}],
- ["expired ticket",{linkHref:"#",childHref:jsInput,expired:true}],
- ["different listing",{linkHref:"#",childHref:jsInput,parentPath:"/chintai/bc_987654321/"}],
- ["send guard",{linkHref:"#",childHref:jsInput,guard:{status:"sending"}}]
-])test("SUUMO href=# rejects "+name+" without changing parent",()=>{
- const f=scenario(config);
- assert.equal(f.run(),false);
- assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
+test("Cloned batch state never grants new tab ownership unless owner token matches",()=>{
+ const GM=new Map([["suumo_batch_active",true],["suumo_batch_owner_token","old-owner"]]);
+ for(const tab of [new Map(),new Map([["suumo_batch_tab_owner_token","different"]])]){
+  const f=fixture(GM,tab);
+  assert.equal(f.api.active(),false);assert.equal(f.api.anyActive(),false);
+ }
 });
-test("Cross-origin opener is ignored without flagging the tab state as corrupt",()=>{
- const f=scenario({cloned:false});
- f.browserWindow.opener={closed:false,location:{get origin(){throw Error("cross-origin")}}};
- assert.equal(f.run(),false);
- assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
+test("Closing the owner tab leaves no resumable batch in an unrelated fresh tab",()=>{
+ const GM=new Map(),old=fixture(GM,new Map([["suumo_batch_tab_owner_token","prior"]]));
+ old.api.set("suumo_batch_owner_token","prior");old.api.set("suumo_batch_active",true);
+ const fresh=fixture(GM,new Map());
+ assert.equal(fresh.api.active(),false);
+ assert.equal(fresh.api.anyActive(),false);
 });
-test("Only first popup can take ownership of an active listing",()=>{
- const a=scenario();
- assert.equal(a.run(),true);
- assert.equal(a.run(),false);
- assert.equal(a.parent.getItem(a.prefix+"suumo_batch_active"),"false");
+test("New run replaces dormant old shared values without restoring old progress",()=>{
+ const GM=new Map([["suumo_batch_active",true],["suumo_batch_index",176],["suumo_batch_owner_token","old"]]);
+ const f=fixture(GM,new Map([["suumo_batch_tab_owner_token","new"]]));
+ assert.equal(f.api.active(),false);
+ f.api.set("suumo_batch_owner_token","new");
+ f.api.set("suumo_batch_index",0);
+ f.api.set("suumo_batch_active",true);
+ assert.equal(f.api.active(),true);
+ assert.equal(f.api.get("suumo_batch_index",99),0);
 });
-test("Existing duplicate/send and reloading safety code remains in place",()=>{
- assert.match(src,/function isCurrentTabItem\(/);
- assert.match(src,/function currentUncertainSend\(/);
- assert.match(src,/navigator\.locks\.request/);
- assert.match(src,/function handleCompletePage\(/);
- assert.match(src,/function failTabRuntime\(/);
- assert.match(src,/\/\/ @version\s+8\.0\.3/);
- new vm.Script(src);
+test("Missing owner token uses its fallback, not a false corruption warning",()=>{
+ const f=fixture();
+ assert.equal(f.api.get("suumo_batch_owner_token",""),"");
+ assert.equal(f.api.active(),false);
+ assert.equal(f.warnings(),0);
 });
-
-test("Reject input page different from the listing's actual form link",()=>{
- const f=scenario({childHref:'https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=987654321'});
- assert.equal(f.run(),false);assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'true');
+test("Corrupt shared execution state fails closed",()=>{
+ const GM=new Map([["suumo_batch_active","true"],["suumo_batch_owner_token","live"]]);
+ const f=fixture(GM,new Map([["suumo_batch_tab_owner_token","live"]]));
+ assert.equal(f.api.active(),false);
+ assert.ok(f.warnings()>0);
 });
-test("Reject form link explicitly naming a different listing",()=>{
- const wrong='https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=987654321';
- const f=scenario({linkHref:wrong,childHref:wrong});assert.equal(f.run(),false);
+test("GM storage failure cannot silently proceed",()=>{
+ const f=fixture(new Map(),new Map(),true);
+ assert.throws(()=>f.api.set("suumo_batch_active",true));
+ assert.equal(f.api.active(),false);
+ assert.ok(f.warnings()>0);
 });
-test("Source revocation failure never publishes a fresh active child identity",()=>{
- const f=scenario({revokeFails:true});assert.equal(f.run(),false);
- assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'true');
- assert.notEqual(f.browserWindow.name,'suumo-jj-report-tab:fresh-unique-child');
-});
-
-for(const key of ['suumo_advanced_tab_runtime_v1_suumo_batch_index','suumo_advanced_browser_tab_identity_v1'])test('Partial child write remains inactive: '+key,()=>{
- const f=scenario({childFailsKey:key});assert.equal(f.run(),false);
- assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'false');assert.equal(f.child.getItem(f.prefix+'suumo_batch_active'),'false');
+test("Completion and send guards remain in source",()=>{
+ for(const pattern of [/navigator\.locks\.request/,/function isCurrentTabItem\(/,/function queuePageTransition\(/,
+ /function isCurrentTabSent\(/,/function handleConfirmPage\(/,/function handleCompletePage\(/])
+  assert.match(source,pattern);
+ new vm.Script(source);
 });
