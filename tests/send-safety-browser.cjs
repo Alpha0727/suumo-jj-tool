@@ -74,6 +74,43 @@ await test('independent tabs simultaneous send burst has one click',async()=>{co
  const at=Date.now()+400;await Promise.all([p,b].map(page=>page.evaluate(async at=>{await new Promise(r=>setTimeout(r,Math.max(0,at-Date.now())));await qa.handleConfirmPage()},at)));
  const clicks=await p.evaluate(()=>JSON.parse(localStorage.getItem('qa-burst')||'[]'));assert.equal(clicks.length,1);return clicks;
  }finally{await ctx.close()}},'browser');
+await test('real-style listing popup: same-origin input tab keeps UI and batch without resending in listing tab',async()=>{
+ const ctx=await context({n:2,route:r=>{
+  const path=new URL(r.request().url()).pathname;
+  const page=path.startsWith('/chintai/bc_')
+   ? html('<a id="js-bknToiawaseFr" target="suumo-report-popup" rel="opener" href="'+form(0,1)+'">指摘フォームを開く</a>')
+   : path.includes('/FR400FG001/')?inputHtml(0):html('unused');
+  return r.fulfill({contentType:'text/html; charset=utf-8',body:page});
+ }});
+ try{
+  const original=await ctx.newPage();
+  await original.goto(listing(0));
+  assert.equal(await original.evaluate(urls=>{const ok=qa.setBatch(urls,0,'ielove');return ok&&qa.bindListingToTab()},[listing(0)]),true);
+  const opening=ctx.waitForEvent('page');
+  await original.evaluate(()=>qa.handleListingPage());
+  const popup=await opening;
+  await popup.waitForLoadState('domcontentloaded');
+  const evidence=await popup.evaluate(async()=>{
+   const before={hasOpener:!!window.opener,kind:location.pathname,active:qa.isBatchActive()};
+   await qa.init();
+   return {...before,
+    activeAfter:qa.isBatchActive(),
+    hasSettingsButton:!!document.getElementById('tm-main-buttons'),
+    hasBatchPanel:!!document.getElementById('tm-batch-status'),
+    errorToast:document.getElementById('tm-toast')?.textContent||'',
+    sourceActive:window.opener?.sessionStorage.getItem('suumo_advanced_tab_runtime_v1_suumo_batch_active')
+   };
+  });
+  assert.equal(evidence.hasOpener,true);
+  assert.equal(evidence.active,true);
+  assert.equal(evidence.activeAfter,true);
+  assert.equal(evidence.sourceActive,'false');
+  assert.equal(evidence.hasSettingsButton,true);
+  assert.equal(evidence.hasBatchPanel,true);
+  assert.doesNotMatch(evidence.errorToast,/タブ専用の保存状態を確認できません/);
+  return evidence;
+ }finally{await ctx.close()}
+});
 await test('new opened tab stays independent on its later same-tab reload',async()=>{const {ctx,p}=await unit();try{
  await p.evaluate(()=>localStorage.setItem('qa-auto','1'));const made=ctx.waitForEvent('page');await p.evaluate(url=>window.open(url,'_blank'),listing(0));const b=await made;await b.waitForURL(listing(0));await b.locator('#tm-main-buttons').waitFor();
  assert.equal(await b.evaluate(()=>qa.isAnyBatchActive()),false);
