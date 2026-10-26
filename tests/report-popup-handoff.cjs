@@ -81,6 +81,30 @@ for(const [name,config] of [
  assert.equal(f.run(),false);
  assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
 });
+// Observed in Chrome: the listing link is href="#" (no inline onclick),
+// while the JavaScript handler opens the shared parameter-free SUUMO form.
+const jsInput="https://suumo.jp/jj/chintai/shiryou/FR400FG001/";
+for(const cloned of [true,false])test("SUUMO href=# popup "+(cloned?"copied":"empty")+" sessionStorage inherits active item",()=>{
+ const f=scenario({cloned,linkHref:"#",childHref:jsInput});
+ assert.equal(f.run(),true);
+ assert.equal(f.child.getItem(f.prefix+"suumo_batch_active"),"true");
+ assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"false");
+ assert.equal(f.browserWindow.name,f.child.getItem(f.storageKey));
+});
+for(const [name,config] of [
+ ["unexpected query",{linkHref:"#",childHref:jsInput+"?bc=987654321"}],
+ ["unexpected hash",{linkHref:"#",childHref:jsInput+"#redirect"}],
+ ["wrong input path",{linkHref:"#",childHref:"https://suumo.jp/jj/chintai/shiryou/FR400FG002/"}],
+ ["external origin",{linkHref:"#",childHref:"https://example.com/jj/chintai/shiryou/FR400FG001/"}],
+ ["other fragment",{linkHref:"#form",childHref:jsInput}],
+ ["expired ticket",{linkHref:"#",childHref:jsInput,expired:true}],
+ ["different listing",{linkHref:"#",childHref:jsInput,parentPath:"/chintai/bc_987654321/"}],
+ ["send guard",{linkHref:"#",childHref:jsInput,guard:{status:"sending"}}]
+])test("SUUMO href=# rejects "+name+" without changing parent",()=>{
+ const f=scenario(config);
+ assert.equal(f.run(),false);
+ assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
+});
 test("Cross-origin opener is ignored without flagging the tab state as corrupt",()=>{
  const f=scenario({cloned:false});
  f.browserWindow.opener={closed:false,location:{get origin(){throw Error("cross-origin")}}};
