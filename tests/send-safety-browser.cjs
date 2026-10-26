@@ -173,6 +173,27 @@ for(const copy of ['copied','empty'])await test('real-style listing popup: full 
   const result=await second.evaluate(()=>({clicks:JSON.parse(localStorage.getItem('qa-clicks')||'[]'),items:qaGet('ielove_suumo_execution_v1').items,sentinel:GM_getValue('settingsSentinel')}));assert.equal(result.clicks.length,2);assert.equal(new Set(result.clicks.map(x=>x.actual)).size,2);assert.ok(result.clicks.every(x=>x.actual===x.guard.url));for(const p of [original,child])assert.equal(await p.evaluate(()=>qa.isBatchActive()),false);assert.equal(result.sentinel,'KEEP');return result;
  }finally{await ctx.close()}
 },'browser');
+// Exercise the real observed link shape through automatic listing handling,
+// confirmation and completion, rather than stopping at the input UI.
+for(const copy of ['copied','empty'])await test('real SUUMO link href=#: full two-item queue '+copy,async()=>{
+ const ctx=await context({auto:true,n:2,route:r=>{
+  const u=new URL(r.request().url());const phase=u.pathname.includes('FR400FG003')?'complete':u.pathname.includes('FR400FG002')?'confirm':u.pathname.includes('FR400FG001')?'input':'listing';
+  const i=phase==='listing'?Number(u.pathname.match(/bc_(\d+)/)?.[1])-100000001:Number(u.searchParams.get('fixture'));
+  let body;
+  if(phase==='listing')body=html(Number.isFinite(i)?'<a id="js-bknToiawaseFr" href="#">申告</a><script>document.querySelector("#js-bknToiawaseFr").addEventListener("click",e=>{e.preventDefault();localStorage.setItem("qa-hash-property","'+i+'");window.open("/jj/chintai/shiryou/FR400FG001/","suumo-report-popup")})</script>':'開始');
+  if(phase==='input')body=inputHtml(0)+`<script>document.querySelector('a.js-clickToForm').href="/jj/chintai/shiryou/FR400FG002/?fixture="+localStorage.getItem("qa-hash-property")</script>`;
+  if(phase==='confirm')body=sendHtml(i,true);
+  if(phase==='complete')body=html('模擬完了');
+  if(copy==='empty'&&phase==='input')body+='<script>for(const key of Object.keys(sessionStorage))if(!key.startsWith("qa-"))sessionStorage.removeItem(key)</script>';
+  return r.fulfill({contentType:'text/html; charset=utf-8',body});
+ }});
+ try{
+  const original=await ctx.newPage();await original.goto('https://suumo.jp/qa-start');await original.evaluate(urls=>qa.setBatch(urls,0,'ielove'),[listing(0),listing(1)]);
+  const first=ctx.waitForEvent('page');await original.goto(listing(0));const child=await first;await child.waitForLoadState();const second=ctx.pages().find(p=>p!==original&&p!==child)||await ctx.waitForEvent('page');await second.waitForLoadState();
+  await second.waitForFunction(()=>qaGet('suumo_batch_active')===false&&qaGet('ielove_suumo_execution_v1')?.items.every(x=>x.status==='complete'),{},{timeout:20000});
+  const result=await second.evaluate(()=>({clicks:JSON.parse(localStorage.getItem('qa-clicks')||'[]'),items:qaGet('ielove_suumo_execution_v1').items,sentinel:GM_getValue('settingsSentinel')}));assert.equal(result.clicks.length,2);assert.equal(new Set(result.clicks.map(x=>x.actual)).size,2);assert.ok(result.clicks.every(x=>x.actual===x.guard.url));for(const p of [original,child])assert.equal(await p.evaluate(()=>qa.isBatchActive()),false);assert.equal(result.sentinel,'KEEP');return result;
+ }finally{await ctx.close()}
+},'browser');
 await test('real-style listing popup: cross-origin opener keeps ordinary settings UI',async()=>{
  const ctx=await context({auto:true,route:r=>r.fulfill({contentType:'text/html; charset=utf-8',body:html('架空ページ')})});try{
   const p=await ctx.newPage();await p.goto('https://cloud.ielove.jp/rent/');const opening=ctx.waitForEvent('page');await p.evaluate(url=>window.open(url,'suumo-cross-origin-report'),form(0,1));const b=await opening;await b.waitForLoadState();await b.locator('#tm-main-buttons').waitFor();const result=await b.evaluate(()=>{let isolated=false;try{void window.opener.location.origin}catch(e){isolated=e.name==='SecurityError'}return{isolated,active:qa.isBatchActive(),toast:document.querySelector('#tm-toast')?.textContent||'',settings:!!document.querySelector('#tm-main-buttons')}});assert.equal(result.isolated,true);assert.equal(result.active,false);assert.equal(result.settings,true);assert.doesNotMatch(result.toast,/タブ専用の保存状態を確認できません/);return result;
