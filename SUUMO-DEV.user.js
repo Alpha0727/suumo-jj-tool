@@ -127,10 +127,14 @@
   // This is a one-time live transfer, not a persistent batch/history restore.
   function acceptReportPopupHandoff() {
     if (!isInputPage() || !window.opener) return false;
+    // An ordinary report page can be opened from another origin. That does not
+    // represent a broken tab store, and must not hide the regular settings UI.
+    const opener=window.opener;
     try {
-      const opener=window.opener;
-      if (opener.closed || opener.location.origin!==location.origin ||
-          !/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) ||
+      if (opener.closed || opener.location.origin!==location.origin) return false;
+    } catch (_) { return false; }
+    try {
+      if (!/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) ||
           !opener.document.querySelector("#js-bknToiawaseFr")) return false;
       const originState=opener.sessionStorage;
       const parentIdentity=originState.getItem(TAB_WINDOW_ID_KEY);
