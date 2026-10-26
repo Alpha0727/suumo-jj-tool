@@ -122,10 +122,75 @@
     catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
   }
 
+  // SUUMO normally opens the report input form from a listing in a new tab.
+  // Only an active listing tab with an exact pending INPUT ticket can hand off.
+  // This is a one-time live transfer, not a persistent batch/history restore.
+  function acceptReportPopupHandoff() {
+    if (!isInputPage() || !window.opener) return false;
+    try {
+      const opener=window.opener;
+      if (opener.closed || opener.location.origin!==location.origin ||
+          !/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) ||
+          !opener.document.querySelector("#js-bknToiawaseFr")) return false;
+      const originState=opener.sessionStorage;
+      const parentIdentity=originState.getItem(TAB_WINDOW_ID_KEY);
+      if (!parentIdentity || opener.name!==parentIdentity) return false;
+      const localIdentity=sessionStorage.getItem(TAB_WINDOW_ID_KEY);
+      if (localIdentity && localIdentity!==parentIdentity) return false;
+      const read=k=>JSON.parse(originState.getItem(TAB_RUNTIME_PREFIX+k)||"null");
+      const urls=read(BATCH_KEYS.urls),index=read(BATCH_KEYS.index),
+            owner=read(BATCH_KEYS.ownerToken),active=read(BATCH_KEYS.active);
+      const tabOwner=originState.getItem(TAB_OWNER_TOKEN_KEY);
+      const item=JSON.parse(originState.getItem(TAB_ITEM_CONTEXT_KEY)||"null");
+      const ticket=JSON.parse(originState.getItem(PAGE_NAV_TICKET_KEY)||"null");
+      const sourceListing=urls?.[index]||"";
+      const expectedId=String(sourceListing.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+      const openedId=String(opener.location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+      const age=Date.now()-Number(ticket?.at);
+      if (!active || !Array.isArray(urls) || !Number.isInteger(index) ||
+          index<0 || index>=urls.length || !owner || owner!==tabOwner ||
+          !expectedId || expectedId!==openedId || !item?.id ||
+          item.ownerToken!==owner || item.index!==index || item.url!==sourceListing ||
+          ticket?.kind!=="input" || ticket.ownerToken!==owner ||
+          ticket.index!==index || ticket.url!==sourceListing || ticket.itemId!==item.id ||
+          !Number.isFinite(age) || age<0 || age>PAGE_TICKET_MAX_AGE_MS ||
+          read(BATCH_KEYS.stage)!==STAGES.LISTING ||
+          read(BATCH_KEYS.submitting)===true ||
+          read(FINAL_SEND_GUARD_KEY)!==null ||
+          originState.getItem(TAB_UNCERTAIN_SEND_KEY)==="1") return false;
+      // A report popup may receive a sessionStorage copy, or an empty store.
+      // In both cases use only the verified listing tab's current batch data.
+      const keys=[];
+      for(let i=0;i<originState.length;i++){
+        const key=originState.key(i);
+        if(key?.startsWith(TAB_RUNTIME_PREFIX) ||
+            [TAB_OWNER_TOKEN_KEY,TAB_ITEM_CONTEXT_KEY,TAB_SENT_CONTEXT_KEY,
+             TAB_UNCERTAIN_SEND_KEY,PAGE_NAV_TICKET_KEY,PAGE_ACTIVE_ENTRY_KEY,
+             SEND_CLAIM_STORAGE_KEY,FAST_REPORT_NAV_KEY].includes(key)) keys.push(key);
+      }
+      for(const key of keys) {
+        const value=originState.getItem(key);
+        if(value!==null)sessionStorage.setItem(key,value);
+      }
+      // The child owns the current operation. Returning to the listing tab
+      // after closing the child must never restart or resend the old item.
+      const fresh="suumo-jj-report-tab:"+createBatchOwnerToken();
+      sessionStorage.setItem(TAB_WINDOW_ID_KEY,fresh);
+      window.name=fresh;
+      originState.setItem(TAB_RUNTIME_PREFIX+BATCH_KEYS.active,JSON.stringify(false));
+      return true;
+    } catch (_) {
+      failTabRuntime(); // Never continue after a partly applied handoff.
+      return false;
+    }
+  }
+
   // A window.open tab starts with a COPY of the opener's sessionStorage.
   // Clear only that copy on its first history entry, never on reload or a normal
   // transition in the original tab. Settings and cross-domain handoff stay in GM.
   function discardOpenedTabRuntime() {
+    if (acceptReportPopupHandoff()) return;
+    if (tabRuntimeFault) return;
     try {
       const identity = sessionStorage.getItem(TAB_WINDOW_ID_KEY);
       if (identity && window.name === identity) return; // Same real browser tab.
