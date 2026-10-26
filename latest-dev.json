@@ -1,5 +1,5 @@
 {
-  "version": "8.0.4",
+  "version": "8.0.5",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "上位版Ver.8.0.4：SUUMO物件掲載ページから新規タブで開く申告入力画面への一括処理の引継ぎを修正。実際の申告リンクURL・掲載ID・処理番号・タブ所有者・遷移チケットを照合し、親タブを停止してから子タブに処理を引き継ぐ。異物件・古い情報・保存失敗時は安全停止。従来の指摘UI・自動入力・高速化・送信確認工程は維持。Codexによる最新TEST版の模擬検証156件PASS・失敗0件。実Tampermonkeyと実SUUMOでの動作検証は未実施。"
+  "notes": "上位版Ver.8.0.5：実SUUMOのhref=#・JavaScriptで別タブへ開く申告画面FR400FG001への正規の処理引継ぎに対応。物件ID・タブ所有者・遷移チケット・送信ガード照合と既存のURL付きリンクの判定を維持。指摘UI・自動入力・検索高速化・送信工程などは変更なし。Codexの最新模擬検証169件PASS、0件FAIL。実Tampermonkey・実SUUMOの申告送信は未検証。"
 }
