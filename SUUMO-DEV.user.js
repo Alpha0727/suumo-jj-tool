@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.2
+// @version      8.0.3
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -72,12 +72,96 @@
     stage: "suumo_batch_stage"
   };
 
+  // Codex-only test model: active queue progress and send state are scoped to
+  // this SUUMO tab. Full navigations and reloads retain sessionStorage, while
+  // opening a fresh tab never inherits a closed tab's GM-backed queue history.
+  // Cross-origin いえらぶ→SUUMO handoff/settings remain GM-backed as needed.
+  const TAB_RUNTIME_PREFIX = "suumo_advanced_tab_runtime_v1_";
+  let tabRuntimeFault = false;
+  function failTabRuntime() {
+    tabRuntimeFault = true;
+    // Do not include corrupt values, exception messages, or profile data in logs.
+    console.warn("[SUUMO JJ TEST] タブ専用の保存状態を確認できないため安全停止");
+    if (typeof document !== "undefined" && document.body) {
+      toast("安全停止：タブ専用の保存状態を確認できません。送信・自動進行を停止しました。設定は削除していません。", 11000);
+    }
+  }
+  function validTabRuntimeValue(key, value) {
+    if (key === "ielove_suumo_execution_v1") return value &&
+      Array.isArray(value.items) && value.items.length > 0 && value.items.every(item =>
+        item && typeof item.url === "string" && item.profile && typeof item.profile === "object");
+    if (key === "suumo_batch_index") return Number.isInteger(value) && value >= 0;
+    if (key === "suumo_batch_urls") return Array.isArray(value) && value.every(url => typeof url === "string");
+    if (/^suumo_batch_(active|submitting|confirm_ready|error|form_ready)$/.test(key)) return typeof value === "boolean";
+    if (key === "suumo_batch_owner_token" || key === "suumo_batch_stage") return typeof value === "string" && !!value;
+    return true;
+  }
+  function tabGet(key, fallback) {
+    if (tabRuntimeFault) return fallback;
+    try {
+      const value=sessionStorage.getItem(TAB_RUNTIME_PREFIX+key);
+      if (value === null) return fallback;
+      const parsed = JSON.parse(value);
+      if (!validTabRuntimeValue(key, parsed)) throw new Error("Invalid tab state");
+      return parsed;
+    } catch (error) {
+      failTabRuntime();
+      return fallback;
+    }
+  }
+  function tabSet(key, value) {
+    // On storage failure STOP rather than silently falling back to a persistent
+    // global store which might outlive the tab and cause a stale batch.
+    if (tabRuntimeFault) throw new Error("Tab state unavailable");
+    try { sessionStorage.setItem(TAB_RUNTIME_PREFIX+key, JSON.stringify(value)); }
+    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
+  }
+  function tabDelete(key) {
+    if (tabRuntimeFault) throw new Error("Tab state unavailable");
+    try { sessionStorage.removeItem(TAB_RUNTIME_PREFIX+key); }
+    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
+  }
+
+  // A window.open tab starts with a COPY of the opener's sessionStorage.
+  // Clear only that copy on its first history entry, never on reload or a normal
+  // transition in the original tab. Settings and cross-domain handoff stay in GM.
+  function discardOpenedTabRuntime() {
+    try {
+      const identity = sessionStorage.getItem(TAB_WINDOW_ID_KEY);
+      if (identity && window.name === identity) return; // Same real browser tab.
+      const active = sessionStorage.getItem(TAB_RUNTIME_PREFIX + "suumo_batch_active");
+      if (identity) {
+        // A blank NEW popup has a copied store but no window.name. A lost name
+        // in an existing history entry is ambiguous: preserve receipts and stop.
+        if (!window.opener || history.length !== 1 || pageStamp() || window.name) {
+          failTabRuntime();
+          return;
+        }
+      } else if (active === "true" || sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY) === "1") {
+        failTabRuntime();
+        return;
+      }
+      const keys = [];
+      if (identity) {
+        for (let i = 0; i < sessionStorage.length; i++) keys.push(sessionStorage.key(i));
+        for (const key of keys) if (key?.startsWith(TAB_RUNTIME_PREFIX) ||
+            [TAB_OWNER_TOKEN_KEY, TAB_ITEM_CONTEXT_KEY, TAB_SENT_CONTEXT_KEY,
+             TAB_UNCERTAIN_SEND_KEY, PAGE_NAV_TICKET_KEY, PAGE_ACTIVE_ENTRY_KEY,
+             SEND_CLAIM_STORAGE_KEY, FAST_REPORT_NAV_KEY].includes(key)) sessionStorage.removeItem(key);
+      }
+      const fresh = "suumo-jj-test-tab:" + createBatchOwnerToken();
+      sessionStorage.setItem(TAB_WINDOW_ID_KEY, fresh);
+      window.name = fresh;
+    } catch (_) { failTabRuntime(); }
+  }
+
+  const TAB_WINDOW_ID_KEY = "suumo_advanced_browser_tab_identity_v1";
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
   const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
   const REPORT_RETRY_KEY = "suumo_advanced_report_retry_v1";
   const FINAL_SEND_GUARD_KEY = "suumo_advanced_final_send_guard_v1";
-  // Web Locks + same-origin durable claim: never depend on a non-atomic GM read/write as a mutex.
+  // Web Locks + tab-local claim: avoid duplicate final clicks within this active tab.
   const SEND_LOCK_NAME = "suumo-jj-advanced-final-send";
   const SEND_CLAIM_STORAGE_KEY = "suumo_jj_advanced_final_send_claim_v1";
   const UNKNOWN_SEND_TIMEOUT_MS = 60000;
@@ -103,11 +187,11 @@
   });
 
   function getBatchStage() {
-    return String(GM_getValue(BATCH_KEYS.stage, STAGES.LISTING) || STAGES.LISTING);
+    return String(tabGet(BATCH_KEYS.stage, STAGES.LISTING) || STAGES.LISTING);
   }
 
   function setBatchStage(stage) {
-    GM_setValue(BATCH_KEYS.stage, stage);
+    tabSet(BATCH_KEYS.stage, stage);
   }
 
 
@@ -136,7 +220,7 @@
   }
 
   function isBatchOwnerTab() {
-    const ownerToken = String(GM_getValue(BATCH_KEYS.ownerToken, "") || "");
+    const ownerToken = String(tabGet(BATCH_KEYS.ownerToken, "") || "");
     const tabToken = getTabOwnerToken();
     return !!ownerToken && !!tabToken && ownerToken === tabToken;
   }
@@ -162,10 +246,10 @@
     }catch(_){}
   }
   function currentBatchIdentity(){
-    if(!isBatchOwnerTab() || !GM_getValue(BATCH_KEYS.active,false))return null;
-    const index=Number(GM_getValue(BATCH_KEYS.index,0))||0;
-    const urls=GM_getValue(BATCH_KEYS.urls,[]);
-    const ownerToken=GM_getValue(BATCH_KEYS.ownerToken,"");
+    if(!isBatchOwnerTab() || !tabGet(BATCH_KEYS.active,false))return null;
+    const index=Number(tabGet(BATCH_KEYS.index,0))||0;
+    const urls=tabGet(BATCH_KEYS.urls,[]);
+    const ownerToken=tabGet(BATCH_KEYS.ownerToken,"");
     const url=Array.isArray(urls)?urls[index]:null;
     return url&&ownerToken?{ownerToken,index,url}:null;
   }
@@ -240,7 +324,7 @@
     if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
        ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
     if(kind==="complete"){
-      const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+      const guard=tabGet(FINAL_SEND_GUARD_KEY,null);
       if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
     }
     const nav=performance.getEntriesByType?.("navigation")?.[0]?.type||"";
@@ -291,7 +375,7 @@
 
   function isCurrentTabSent(){
     const ctx=readTabContext(TAB_SENT_CONTEXT_KEY),item=readTabContext(TAB_ITEM_CONTEXT_KEY);
-    const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    const guard=tabGet(FINAL_SEND_GUARD_KEY,null);
     return isCurrentTabItem()&&ctx?.itemId===item?.id&&
       ctx?.id&&ctx.id===guard?.id&&
       (pageStamp()?.kind!=="complete"||pageStamp()?.sendId===ctx.id)&&
@@ -300,6 +384,7 @@
       guard.status==="sending";
   }
   function rejectStaleTabPage(){
+    if (tabRuntimeFault) return failTabRuntime();
     // Never touch shared status or index from an older tab.
     toast("安全停止：この画面は現在処理中の掲載と対応していません。元の一括処理タブで確認してください。",9000);
     console.warn("[SUUMO JJ 上位版] 古い画面の実行を拒否",location.pathname);
@@ -307,7 +392,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.2";
+  const SCRIPT_VERSION = "8.0.3";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -688,7 +773,7 @@
     if (isFormReady()) return true;
     if (isBatchError() && !forceRetry) return false;
 
-    const attempts = Number(GM_getValue(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
+    const attempts = Number(tabGet(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
     if (attempts >= FORM_PREP_MAX_ATTEMPTS) {
       recordIssue({phase:"申告：フォーム準備",index:getBatchIndex()+1,kind:"フォーム取得・入力失敗",
         action:"3回試行後スキップ",attempts,
@@ -700,7 +785,7 @@
     const preparationStarted = performance.now();
     formPreparationRunning = true;
     setBatchStage(STAGES.INPUT_PREPARING);
-    GM_setValue(FORM_PREP_ATTEMPTS_KEY, attempts + 1);
+    tabSet(FORM_PREP_ATTEMPTS_KEY, attempts + 1);
 
     try {
       setFormReady(false);
@@ -731,13 +816,13 @@
       setFormReady(true);
       setConfirmReady(false);
       setBatchStage(STAGES.INPUT_READY);
-      GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+      tabDelete(FORM_PREP_ATTEMPTS_KEY);
       updateBatchPanel();
       toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
       return true;
     } catch (error) {
       console.warn("[SUUMO JJ] form preparation failed:", error);
-      const used = Number(GM_getValue(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
+      const used = Number(tabGet(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
 
       if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
         toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
@@ -761,60 +846,60 @@
 
   const BatchState = {
     get(key, fallback) {
-      return GM_getValue(BATCH_KEYS[key], fallback);
+      return tabGet(BATCH_KEYS[key], fallback);
     },
     set(key, value) {
-      GM_setValue(BATCH_KEYS[key], value);
+      tabSet(BATCH_KEYS[key], value);
     }
   };
 
   function getBatchUrls() {
-    const urls = GM_getValue(BATCH_KEYS.urls, []);
+    const urls = tabGet(BATCH_KEYS.urls, []);
     return Array.isArray(urls) ? urls : [];
   }
 
   function getBatchIndex() {
-    return Number(GM_getValue(BATCH_KEYS.index, 0)) || 0;
+    return Number(tabGet(BATCH_KEYS.index, 0)) || 0;
   }
 
   function isBatchActive() {
-    return !!GM_getValue(BATCH_KEYS.active, false) && isBatchOwnerTab();
+    return !!tabGet(BATCH_KEYS.active, false) && isBatchOwnerTab() && !tabRuntimeFault;
   }
 
   function isAnyBatchActive() {
-    return !!GM_getValue(BATCH_KEYS.active, false);
+    return !!tabGet(BATCH_KEYS.active, false);
   }
 
   function isSubmitting() {
-    return !!GM_getValue(BATCH_KEYS.submitting, false);
+    return !!tabGet(BATCH_KEYS.submitting, false);
   }
 
   function setSubmitting(value) {
-    GM_setValue(BATCH_KEYS.submitting, !!value);
+    tabSet(BATCH_KEYS.submitting, !!value);
   }
 
   function isConfirmReady() {
-    return !!GM_getValue(BATCH_KEYS.confirmReady, false);
+    return !!tabGet(BATCH_KEYS.confirmReady, false);
   }
 
   function setConfirmReady(value) {
-    GM_setValue(BATCH_KEYS.confirmReady, !!value);
+    tabSet(BATCH_KEYS.confirmReady, !!value);
   }
 
   function isBatchError() {
-    return !!GM_getValue(BATCH_KEYS.error, false);
+    return !!tabGet(BATCH_KEYS.error, false);
   }
 
   function setBatchError(value) {
-    GM_setValue(BATCH_KEYS.error, !!value);
+    tabSet(BATCH_KEYS.error, !!value);
   }
 
   function isFormReady() {
-    return !!GM_getValue(BATCH_KEYS.formReady, false);
+    return !!tabGet(BATCH_KEYS.formReady, false);
   }
 
   function setFormReady(value) {
-    GM_setValue(BATCH_KEYS.formReady, !!value);
+    tabSet(BATCH_KEYS.formReady, !!value);
   }
 
 
@@ -833,37 +918,40 @@
   }
 
   function setBatch(urls, index = 0, source = "regular") {
+    discardOpenedTabRuntime();
+    if (tabRuntimeFault) return false;
     // A previous POST can still navigate this tab after a timeout.
     // Quarantine this browser tab even if the operator stopped the old batch.
     let sameTabHasUnresolvedPost=true;
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
-    const unresolvedPost=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    const unresolvedPost=tabGet(FINAL_SEND_GUARD_KEY,null);
+    if (tabRuntimeFault) return false;
     if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
       toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
       return false;
     }
     if (!requireProfileManager()) return false;
     if (source !== "ielove") {
-      GM_deleteValue(IELOVE_BATCH_EXECUTION_KEY);
-      GM_setValue(ISSUE_LOG_KEY, []);
+      tabDelete(IELOVE_BATCH_EXECUTION_KEY);
+      tabSet(ISSUE_LOG_KEY, []);
     }
-    GM_deleteValue(REPORT_RETRY_KEY);
-    GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    tabDelete(REPORT_RETRY_KEY);
+    tabDelete(FINAL_SEND_GUARD_KEY);
     forgetTabContexts();
     try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
-    GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
-    GM_setValue(BATCH_KEYS.urls, urls);
-    GM_setValue(BATCH_KEYS.index, index);
-    GM_setValue(BATCH_KEYS.active, true);
-    GM_setValue(BATCH_SKIP_LOG_KEY, []);
+    tabSet(BATCH_KEYS.ownerToken, ownerToken);
+    tabSet(BATCH_KEYS.urls, urls);
+    tabSet(BATCH_KEYS.index, index);
+    tabSet(BATCH_KEYS.active, true);
+    tabSet(BATCH_SKIP_LOG_KEY, []);
     setBatchStage(STAGES.LISTING);
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    tabDelete(FORM_PREP_ATTEMPTS_KEY);
     if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       clearBatch();
       toast("一括処理のタブ識別情報を保存できません。送信を開始しません。",8500);
@@ -873,11 +961,11 @@
   }
 
   function clearBatch() {
-    GM_setValue(BATCH_KEYS.active, false);
-    GM_setValue(BATCH_KEYS.index, 0);
-    GM_setValue(BATCH_KEYS.urls, []);
-    GM_deleteValue(BATCH_KEYS.ownerToken);
-    GM_deleteValue(BATCH_KEYS.stage);
+    tabSet(BATCH_KEYS.active, false);
+    tabSet(BATCH_KEYS.index, 0);
+    tabSet(BATCH_KEYS.urls, []);
+    tabDelete(BATCH_KEYS.ownerToken);
+    tabDelete(BATCH_KEYS.stage);
     clearTabOwnerToken();
     forgetTabContexts();
     try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
@@ -885,8 +973,8 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
-    GM_deleteValue(REPORT_RETRY_KEY);
+    tabDelete(FORM_PREP_ATTEMPTS_KEY);
+    tabDelete(REPORT_RETRY_KEY);
   }
 
   function getPermanentExcludedCompanies() {
@@ -1159,7 +1247,7 @@
 
   // エラー診断だけを保存する。会社名・入力値・認証情報はログへ含めない。
   function issueList(){
-    const rows=GM_getValue(ISSUE_LOG_KEY,[]);
+    const rows=tabGet(ISSUE_LOG_KEY,[]);
     return Array.isArray(rows)?rows:[];
   }
   // Shared report only accepts generic diagnoses, never raw exception values/PII/tokens.
@@ -1193,7 +1281,7 @@
       url:publicListingUrl(url),at:new Date().toISOString(),version:SCRIPT_VERSION};
     const rows=issueList().filter(row=>row.id!==id);
     rows.push(item);
-    GM_setValue(ISSUE_LOG_KEY,rows.slice(-300));
+    tabSet(ISSUE_LOG_KEY,rows.slice(-300));
     console.warn("[SUUMO JJ 上位版] 問題記録",item);
   }
   function safeIssuePhase(value){
@@ -1286,8 +1374,8 @@
     openIssueResults(); // 成功だけの処理では結果ウィンドウを出さない。
   }
   function clearReportRetry(phase){
-    const state=GM_getValue(REPORT_RETRY_KEY,null);
-    if(phase && state?.phase===phase)GM_deleteValue(REPORT_RETRY_KEY);
+    const state=tabGet(REPORT_RETRY_KEY,null);
+    if(phase && state?.phase===phase)tabDelete(REPORT_RETRY_KEY);
     // Phase is required. Clear all retries only after the listing is definitively complete,
     // skipped, or a brand-new batch starts.
   }
@@ -1296,17 +1384,17 @@
     if(!isBatchActive()||!isCurrentTabItem()||nextListingStarted)return false;
     const index=getBatchIndex(),url=getBatchUrls()[index],item=currentIeloveExecutionItem();
     if(!url||(getIeloveExecution()&&!item)||item?.status==="sending"||currentUncertainSend())return false;
-    const prev=GM_getValue(REPORT_RETRY_KEY,null);
+    const prev=tabGet(REPORT_RETRY_KEY,null);
     const same=prev?.index===index&&prev?.url===url&&prev?.phase===phase;
     const attempts=(same?Number(prev.attempts)||0:0)+1;
     if(attempts>=MAX_STAGE_ATTEMPTS){
       recordIssue({phase:"申告："+phase,index:index+1,kind:"処理失敗",
         action:"3回試行後スキップ",detail:message,attempts,url});
-      GM_deleteValue(REPORT_RETRY_KEY);
+      tabDelete(REPORT_RETRY_KEY);
       setSubmitting(false);setBatchError(false);setFormReady(false);
       return advancePastSkippedListing("処理失敗："+phase);
     }
-    GM_setValue(REPORT_RETRY_KEY,{index,url,phase,attempts});
+    tabSet(REPORT_RETRY_KEY,{index,url,phase,attempts});
     setSubmitting(false);setConfirmReady(false);setBatchError(false);setFormReady(false);
     setBatchStage(STAGES.LISTING);
     toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
@@ -1320,7 +1408,7 @@
   }
   function currentUncertainSend(){
     if(!isBatchActive())return false;
-    const record=GM_getValue(FINAL_SEND_GUARD_KEY,null),index=getBatchIndex();
+    const record=tabGet(FINAL_SEND_GUARD_KEY,null),index=getBatchIndex();
     return record?.status==="sending"&&record.index===index&&record.url===getBatchUrls()[index];
   }
   // A timed-out POST is not a failed POST. Never send a second listing in this
@@ -1396,7 +1484,7 @@
               const doc = new DOMParser().parseFromString(html, "text/html");
               const inputUrl = directReportInputUrlFromListingDoc(doc, target.href);
               if (inputUrl && batchTaskStillCurrent(task) &&
-                  !currentUncertainSend() && !GM_getValue(FINAL_SEND_GUARD_KEY,null)?.status) {
+                  !currentUncertainSend() && !tabGet(FINAL_SEND_GUARD_KEY,null)?.status) {
                 if (queuePageTransition("input")) {
                   console.info("[SUUMO JJ 上位版] 軽量遷移：掲載画面の表示を省略");
                   location.assign(inputUrl);
@@ -1425,7 +1513,7 @@
     if (currentIeloveExecutionItem() && currentIeloveExecutionItem().status !== "complete") return;
     nextListingStarted = true;
     clearSendClaimForCurrent();
-    GM_deleteValue(FINAL_SEND_GUARD_KEY);
+    tabDelete(FINAL_SEND_GUARD_KEY);
 
     const urls = getBatchUrls();
     let index = getBatchIndex();
@@ -1436,7 +1524,7 @@
       const execution = getIeloveExecution();
       if (execution) {
         execution.finishedAt = Date.now();
-        GM_setValue(IELOVE_BATCH_EXECUTION_KEY, execution);
+        tabSet(IELOVE_BATCH_EXECUTION_KEY, execution);
       }
 
       clearBatch();
@@ -1448,7 +1536,7 @@
       return;
     }
 
-    GM_setValue(BATCH_KEYS.index, index);
+    tabSet(BATCH_KEYS.index, index);
     if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       toast("次の掲載に進むためのタブ識別情報を保存できません。自動進行を停止しました。",8500);
       return;
@@ -1457,7 +1545,7 @@
     setSubmitting(false);
     setConfirmReady(false);
     setFormReady(false);
-    GM_deleteValue(REPORT_RETRY_KEY);
+    tabDelete(REPORT_RETRY_KEY);
     const task=captureBatchTask();
     setTimeout(() => { void navigateNextListingWithoutDisplay(task, urls[index]); }, 150);
   }
@@ -1513,11 +1601,11 @@
 
   function captureSubmissionTarget(){
     if(!isBatchActive()||!isConfirmPage()||!isCurrentTabItem())return null;
-    const index=getBatchIndex(),urls=getBatchUrls(),ownerToken=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const index=getBatchIndex(),urls=getBatchUrls(),ownerToken=String(tabGet(BATCH_KEYS.ownerToken,"")||"");
     const pageContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!urls[index]||!ownerToken||getTabOwnerToken()!==ownerToken)return null;
     const item=currentIeloveExecutionItem();
-    if(getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending"))return null;
+    if(tabRuntimeFault || (getIeloveExecution()&&(!item||item.url!==urls[index]||item.status==="sending")))return null;
     return {index,url:urls[index],ownerToken,pageUrl:location.href,
       itemId:pageContext.id,
       profileSnapshot:item?JSON.stringify(item.profile||{}):null};
@@ -1527,27 +1615,28 @@
        readTabContext(TAB_ITEM_CONTEXT_KEY)?.id!==target.itemId||
        location.href!==target.pageUrl||
        getBatchIndex()!==target.index||getBatchUrls()[target.index]!==target.url||
-       GM_getValue(BATCH_KEYS.ownerToken,"")!==target.ownerToken||
+       tabGet(BATCH_KEYS.ownerToken,"")!==target.ownerToken||
        getTabOwnerToken()!==target.ownerToken||getBatchStage()!==STAGES.SUBMITTING_FINAL||
        currentUncertainSend())return false;
     const item=currentIeloveExecutionItem();
     if(getIeloveExecution()&&(!item||item.url!==target.url||
        JSON.stringify(item.profile||{})!==target.profileSnapshot||item.status==="sending"))return false;
-    return true;
+    return !tabRuntimeFault;
   }
   function readSendClaim(){
-    return JSON.parse(localStorage.getItem(SEND_CLAIM_STORAGE_KEY)||"null");
+    return JSON.parse(sessionStorage.getItem(SEND_CLAIM_STORAGE_KEY)||"null");
   }
   function clearSendClaimForCurrent(){
     try{
       const claim=readSendClaim(),index=getBatchIndex();
-      if(claim?.ownerToken===GM_getValue(BATCH_KEYS.ownerToken,"") &&
+      if(claim?.ownerToken===tabGet(BATCH_KEYS.ownerToken,"") &&
          claim?.index===index&&claim?.url===getBatchUrls()[index]){
-        localStorage.removeItem(SEND_CLAIM_STORAGE_KEY);
+        sessionStorage.removeItem(SEND_CLAIM_STORAGE_KEY);
       }
     }catch(error){console.warn("[SUUMO JJ 上位版] 送信履歴の整理に失敗",error);}
   }
   function reportSendLockUnavailable(){
+    if (tabRuntimeFault) return failTabRuntime();
     setBatchError(true);
     // Do not move to the next listing or automatically retry a potentially active send.
     toast("安全確認：複数タブの送信排他を使用できません。送信を停止しました。",8500);
@@ -1581,7 +1670,7 @@
     if(!sameSubmissionTarget(preTarget)||confirmSendStarted||!sendLink.isConnected)return;
     // When Web Locks is absent, fail closed instead of depending on a shared GM flag.
     try{
-      if(!navigator.locks?.request||typeof localStorage?.getItem!=="function"){
+      if(!navigator.locks?.request||typeof sessionStorage?.getItem!=="function"){
         reportSendLockUnavailable();
         return;
       }
@@ -1600,8 +1689,8 @@
         const marker={id:createBatchOwnerToken(),itemId:preTarget.itemId,
           ownerToken:preTarget.ownerToken,index:preTarget.index,
           url:preTarget.url,at:Date.now()};
-        // Persist the claim before the click. Lock serializes two tabs on same origin.
-        localStorage.setItem(SEND_CLAIM_STORAGE_KEY,JSON.stringify(marker));
+        // Save the claim before the click, inside this tab only. Web Locks still serialize concurrent clicks.
+        sessionStorage.setItem(SEND_CLAIM_STORAGE_KEY,JSON.stringify(marker));
         if(!saveTabContext(TAB_SENT_CONTEXT_KEY,marker)){
           // No click is ever issued if the tab-local send identity cannot be persisted.
           reportSendLockUnavailable();
@@ -1610,7 +1699,7 @@
         // Quarantine from the first click, including the interval before timeout.
         sessionStorage.setItem(TAB_UNCERTAIN_SEND_KEY,"1");
         confirmSendStarted=true;
-        GM_setValue(FINAL_SEND_GUARD_KEY,{...marker,status:"sending",startedAt:marker.at});
+        tabSet(FINAL_SEND_GUARD_KEY,{...marker,status:"sending",startedAt:marker.at});
         saveIeloveExecutionStatus("sending");
         markAdvancedTiming("final-send-clicked");
         startBackgroundWatchdog();
@@ -1643,7 +1732,7 @@
     // and same persisted POST ID; isCurrentTabSent() checks both.
     if(stage===STAGES.SEND_UNCERTAIN){
       const id="最終送信:"+(getBatchIndex()+1),url=getBatchUrls()[getBatchIndex()];
-      GM_setValue(ISSUE_LOG_KEY,issueList().filter(row=>
+      tabSet(ISSUE_LOG_KEY,issueList().filter(row=>
         !(row.id===id && row.kind==="送信結果不明" && row.url===publicListingUrl(url))));
     }
     // The completion passed the same-item, same-POST verification.
@@ -1652,8 +1741,8 @@
     markAdvancedTiming("complete-page");
     saveIeloveExecutionStatus("complete");
     clearSendClaimForCurrent();
-    GM_deleteValue(FINAL_SEND_GUARD_KEY);
-    GM_deleteValue(REPORT_RETRY_KEY);
+    tabDelete(FINAL_SEND_GUARD_KEY);
+    tabDelete(REPORT_RETRY_KEY);
     setSubmitting(true);
     setConfirmReady(false);
     updateBatchPanel();
@@ -1690,7 +1779,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    tabDelete(FORM_PREP_ATTEMPTS_KEY);
 
     toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
 
@@ -1719,33 +1808,33 @@
         action:"自動スキップ",attempts:1,detail:"SUUMOが掲載終了を明示",
         url:urls[index]});
     }
-    const history=GM_getValue(BATCH_SKIP_LOG_KEY, []);
+    const history=tabGet(BATCH_SKIP_LOG_KEY, []);
     const log=Array.isArray(history)?history:[];
     log.push({index:index+1,url:urls[index],reason:String(reason||"スキップ"),at:Date.now()});
-    GM_setValue(BATCH_SKIP_LOG_KEY,log);
+    tabSet(BATCH_SKIP_LOG_KEY,log);
     saveIeloveExecutionStatus(uncertain?"uncertain":"skipped");
     if(uncertain){
       clearSendClaimForCurrent();
-      GM_deleteValue(FINAL_SEND_GUARD_KEY);
+      tabDelete(FINAL_SEND_GUARD_KEY);
     }
     const execution=getIeloveExecution();
     if(execution?.items[index]?.url===urls[index]){
       execution.items[index].skipReason=String(reason||"スキップ");
-      GM_setValue(IELOVE_BATCH_EXECUTION_KEY,execution);
+      tabSet(IELOVE_BATCH_EXECUTION_KEY,execution);
     }
     console.info("[SUUMO JJ 上位版] 掲載をスキップ",log[log.length-1]);
     const next=index+1;
     if(next>=urls.length){
       if(execution){
         execution.finishedAt=Date.now();
-        GM_setValue(IELOVE_BATCH_EXECUTION_KEY,execution);
+        tabSet(IELOVE_BATCH_EXECUTION_KEY,execution);
       }
       clearBatch();
       document.getElementById("tm-batch-status")?.remove();
       showBatchIssueResults();
       return true;
     }
-    GM_setValue(BATCH_KEYS.index,next);
+    tabSet(BATCH_KEYS.index,next);
     if(!primeCurrentTabItem()||!queuePageTransition("listing")){
       toast("次の掲載の識別情報を保存できないため自動進行を停止しました。",8500);
       return false;
@@ -1754,8 +1843,8 @@
     setSubmitting(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
-    GM_deleteValue(REPORT_RETRY_KEY);
+    tabDelete(FORM_PREP_ATTEMPTS_KEY);
+    tabDelete(REPORT_RETRY_KEY);
     toast("掲載 "+(index+1)+"件目をスキップ（"+reason+"）\n次の掲載へ進みます",1600);
     location.href=urls[next];
     return true;
@@ -1830,7 +1919,7 @@
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
+    tabDelete(FORM_PREP_ATTEMPTS_KEY);
     updateBatchPanel();
     toast(`掲載ページ ${index + 1}/${urls.length}\n申告フォームを開きます…`);
 
@@ -1896,8 +1985,8 @@
 
     autoActionPhase = null;
     autoActionDeadline = 0;
-    GM_deleteValue(AUTO_ACTION_PHASE_KEY);
-    GM_deleteValue(AUTO_ACTION_DEADLINE_KEY);
+    tabDelete(AUTO_ACTION_PHASE_KEY);
+    tabDelete(AUTO_ACTION_DEADLINE_KEY);
   }
 
   function recoverAutoActionIfDue() {
@@ -1906,8 +1995,8 @@
     if (!button) return;
 
     const phase = AUTO_ACTION_SINGLE_PHASE;
-    const savedPhase = GM_getValue(AUTO_ACTION_PHASE_KEY, "");
-    const savedDeadline = Number(GM_getValue(AUTO_ACTION_DEADLINE_KEY, 0));
+    const savedPhase = tabGet(AUTO_ACTION_PHASE_KEY, "");
+    const savedDeadline = Number(tabGet(AUTO_ACTION_DEADLINE_KEY, 0));
 
     if (savedPhase === phase && savedDeadline && Date.now() >= savedDeadline) {
       autoActionCancelledPhase = null;
@@ -1962,15 +2051,15 @@
   function startBackgroundWatchdog() {
     if(sendWatchdogTimer){clearTimeout(sendWatchdogTimer);sendWatchdogTimer=null;}
     if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend())return;
-    const record=GM_getValue(FINAL_SEND_GUARD_KEY,null);
+    const record=tabGet(FINAL_SEND_GUARD_KEY,null);
     if(!record||!Number.isFinite(Number(record.startedAt)))return;
-    const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
+    const owner=String(tabGet(BATCH_KEYS.ownerToken,"")||"");
     const remaining=Math.max(0,UNKNOWN_SEND_TIMEOUT_MS-(Date.now()-Number(record.startedAt)));
     sendWatchdogTimer=setTimeout(()=>{
       sendWatchdogTimer=null;
       if(!isBatchActive()||isCompletePage()||!isCurrentTabSent()||!currentUncertainSend()||
          getBatchIndex()!==record.index||getBatchUrls()[record.index]!==record.url||
-         GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
+         tabGet(BATCH_KEYS.ownerToken,"")!==owner)return;
       // Deadline means UNKNOWN, not failed and not permission to retry.
       advanceUncertainSubmission("最終送信後60秒以内に完了画面を確認できませんでした");
     },remaining);
@@ -1992,14 +2081,14 @@
       autoActionTimer = null;
       autoActionFrame = null;
 
-      const savedPhase = GM_getValue(AUTO_ACTION_PHASE_KEY, "");
-      const savedDeadline = Number(GM_getValue(AUTO_ACTION_DEADLINE_KEY, 0));
+      const savedPhase = tabGet(AUTO_ACTION_PHASE_KEY, "");
+      const savedDeadline = Number(tabGet(AUTO_ACTION_DEADLINE_KEY, 0));
       autoActionPhase = phase;
       autoActionDeadline = (savedPhase === phase && savedDeadline)
         ? savedDeadline
         : Date.now() + AUTO_ACTION_MS;
-      GM_setValue(AUTO_ACTION_PHASE_KEY, phase);
-      GM_setValue(AUTO_ACTION_DEADLINE_KEY, autoActionDeadline);
+      tabSet(AUTO_ACTION_PHASE_KEY, phase);
+      tabSet(AUTO_ACTION_DEADLINE_KEY, autoActionDeadline);
 
       // 実行判定はCSSアニメーションではなく実時間。
       // バックグラウンドタブでも、タイマーが実行可能になった時点で経過時間を確認する。
@@ -2848,8 +2937,9 @@
     });
     const handoff = { records:draft.records, searches:results, index:0, createdAt, token };
     GM_deleteValue("ielove_suumo_choices_v1");
-    GM_setValue(ISSUE_LOG_KEY, []);
     GM_setValue(IELOVE_SUUMO_HANDOFF_KEY, handoff);
+    // Issue results start fresh on the new SUUMO tab; do not use Cloud's
+    // origin-scoped sessionStorage for the cross-domain handoff.
     markAdvancedTiming("search-navigation-start");
     const tab = window.open(results[0].url, "_blank");
     if (!tab) toast("SUUMOタブを開けませんでした。ポップアップ許可を確認してください。", 6000);
@@ -3099,188 +3189,7 @@
 
   // Ver.8.0.2: a stale global active flag must not be mistaken for proof that
   // another tab is currently submitting. No automatic clearing of send claims.
-  const STALE_BATCH_RECOVERY_ID = "tm-stale-batch-recovery";
-  const BATCH_OWNER_PRESENCE_CHANNEL = "suumo-jj-advanced-owner-presence-v802";
-  let batchOwnerResponder = null;
-
-  function startBatchOwnerResponder() {
-    if (batchOwnerResponder || typeof BroadcastChannel !== "function") return;
-    try {
-      const channel = new BroadcastChannel(BATCH_OWNER_PRESENCE_CHANNEL);
-      channel.onmessage = event => {
-        const m = event.data;
-        if (m?.type !== "probe" || typeof m.nonce !== "string") return;
-        if (!isBatchOwnerTab() || !isAnyBatchActive() || !isCurrentTabItem()) return;
-        channel.postMessage({type:"alive",nonce:m.nonce,ownerToken:getTabOwnerToken()});
-      };
-      batchOwnerResponder = channel;
-    } catch (_) {}
-  }
-
-  async function checkLiveBatchOwner(expectedOwner) {
-    if (typeof BroadcastChannel !== "function") return null;
-    return new Promise(resolve => {
-      let channel=null, timer=null, settled=false;
-      const finish = answer => {
-        if(settled)return;
-        settled=true;
-        if(timer!==null)clearTimeout(timer);
-        try{channel?.close();}catch(_){}
-        resolve(answer);
-      };
-      try{
-        channel=new BroadcastChannel(BATCH_OWNER_PRESENCE_CHANNEL);
-        const nonce=createBatchOwnerToken();
-        channel.onmessage=event=>{
-          const m=event.data;
-          if(m?.type==="alive"&&m.nonce===nonce&&m.ownerToken===expectedOwner)finish(true);
-        };
-        timer=setTimeout(()=>finish(false),900);
-        channel.postMessage({type:"probe",nonce});
-      }catch(_){finish(null);}
-    });
-  }
-
-  // Fail closed if *any* sent-or-possibly-sent marker is present. Never
-  // interpret the age of a marker as permission to retry or reset it.
-  function batchRecoveryBlockReason() {
-    if (!isAnyBatchActive()) return "";
-    if (isBatchOwnerTab() && isCurrentTabItem()) return "このタブが現在の申告処理の所有者です。元の処理画面で確認してください。";
-    const guard=GM_getValue(FINAL_SEND_GUARD_KEY,null);
-    if (guard !== null && guard !== undefined) return "最終送信の確認履歴が残っています。送信結果を確認するまで復旧できません。";
-    try {
-      if (localStorage.getItem(SEND_CLAIM_STORAGE_KEY) !== null)
-        return "送信クリックの履歴が残っています。二重送信防止のため復旧できません。";
-      if (sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1")
-        return "このタブに結果不明の送信履歴があります。復旧できません。";
-    } catch (_) {
-      return "送信履歴の保存領域を確認できないため、安全に復旧できません。";
-    }
-    const stage=getBatchStage();
-    if ([STAGES.SUBMITTING_CONFIRM,STAGES.SUBMITTING_FINAL,STAGES.SEND_UNCERTAIN].includes(stage) ||
-        isSubmitting()) return "送信中または送信直前の状態です。受信状況の確認が必要です。";
-    const execution=GM_getValue(IELOVE_BATCH_EXECUTION_KEY,null);
-    if (Array.isArray(execution?.items) && execution.items.some(item=>
-        item?.status==="sending" || item?.status==="uncertain"))
-      return "一括申告の中に送信結果未確認の掲載があります。復旧できません。";
-    return "";
-  }
-
-  // A consciously initiated recovery is the only path which may clear an
-  // orphaned active flag. All profiles, search results, choices, diagnostics,
-  // claims and send guard data are intentionally preserved.
-  function clearConfirmedDormantBatch(ownerSnapshot) {
-    if (!isAnyBatchActive() || (isBatchOwnerTab() && isCurrentTabItem()) ||
-        GM_getValue(BATCH_KEYS.ownerToken,"") !== ownerSnapshot ||
-        batchRecoveryBlockReason())return false;
-    GM_setValue(BATCH_KEYS.active,false);
-    GM_setValue(BATCH_KEYS.index,0);
-    GM_setValue(BATCH_KEYS.urls,[]);
-    GM_deleteValue(BATCH_KEYS.ownerToken);
-    GM_deleteValue(BATCH_KEYS.stage);
-    setSubmitting(false);
-    setConfirmReady(false);
-    setBatchError(false);
-    setFormReady(false);
-    GM_deleteValue(FORM_PREP_ATTEMPTS_KEY);
-    GM_deleteValue(REPORT_RETRY_KEY);
-    // Deliberately leave the send claim, global send guard, and handoff alone.
-    return true;
-  }
-
-  function showStaleBatchRecoveryDialog() {
-    if (!isAuthorizedIeloveBatchSearch()) return;
-    document.getElementById(STALE_BATCH_RECOVERY_ID)?.remove();
-    const overlay=document.createElement("div");
-    overlay.id=STALE_BATCH_RECOVERY_ID;
-    overlay.style.cssText="position:fixed;inset:0;background:#0009;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Meiryo,sans-serif;color:#172634";
-    const card=document.createElement("div");
-    card.style.cssText="width:min(570px,94vw);max-height:90vh;overflow:auto;background:#fff;border-radius:14px;padding:22px;box-shadow:0 12px 40px #0005";
-    const title=document.createElement("h2");
-    title.textContent="一括検索を安全停止しました";
-    title.style.cssText="font-size:19px;margin:0 0 10px";
-    const summary=document.createElement("p");
-    summary.style.cssText="font-size:13px;line-height:1.7;white-space:pre-line";
-    const message=document.createElement("p");
-    message.style.cssText="font-size:13px;line-height:1.7;color:#9b2c22;white-space:pre-line";
-    const checkLabel=document.createElement("label");
-    checkLabel.style.cssText="display:flex;align-items:flex-start;gap:9px;font-size:13px;margin:12px 0";
-    const checkbox=document.createElement("input");
-    checkbox.type="checkbox";
-    const checkText=document.createElement("span");
-    checkText.textContent="他のSUUMOタブで一括申告が進行中でなく、未確認の申告送信もないことを確認しました。";
-    checkLabel.append(checkbox,checkText);
-    const actions=document.createElement("div");
-    actions.style.cssText="display:flex;gap:8px;flex-wrap:wrap";
-    const retry=document.createElement("button");
-    retry.textContent="保存状態を確認して検索を再開";
-    retry.style.cssText="flex:1;min-width:220px;padding:12px;border:0;border-radius:8px;background:#205375;color:#fff;font-weight:bold;cursor:pointer";
-    const close=document.createElement("button");
-    close.textContent="閉じる";
-    close.style.cssText="padding:12px 18px;border:1px solid #bcc5cf;border-radius:8px;background:#fff;cursor:pointer";
-    actions.append(retry,close);
-    card.append(title,summary,message,checkLabel,actions);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-    let additionalWarning="";
-    const paint=()=>{
-      const active=isAnyBatchActive();
-      const urls=getBatchUrls();
-      const stage=getBatchStage();
-      const reason=batchRecoveryBlockReason();
-      summary.textContent="保存された一括申告： "+(active?"実行中フラグあり":"なし")+
-        "\n保存進捗： "+(active?(getBatchIndex()+1)+" / "+urls.length:"なし")+
-        "\n保存工程： "+(active?stage:"なし")+
-        "\n※別タブがまだ処理中かどうかは保存情報だけでは判断できません。";
-      message.textContent=additionalWarning || reason || (active
-        ?"送信履歴の危険信号は見つかっていません。ただし、他のタブが本当に終了しているか確認が必要です。"
-        :"実行中の状態はありません。通常の検索を再開できます。");
-      checkLabel.style.display=active?"flex":"none";
-      retry.disabled=!!reason || (active&&!checkbox.checked);
-      retry.style.opacity=retry.disabled?"0.45":"1";
-    };
-    checkbox.onchange=paint;
-    close.onclick=()=>overlay.remove();
-    retry.onclick=async()=>{
-      if(retry.disabled)return;
-      retry.disabled=true;
-      additionalWarning="";
-      const owner=String(GM_getValue(BATCH_KEYS.ownerToken,"")||"");
-      if(isAnyBatchActive()){
-        if(!confirm("送信結果不明の案件がなく、他のSUUMOタブで一括申告が進行中でないことを確認しましたか？\n\n確認できない場合はキャンセルしてください。")){paint();return;}
-        const live=await checkLiveBatchOwner(owner);
-        if(live===true){
-          additionalWarning="現在の申告タブから応答がありました。処理中のため復旧できません。";
-          paint();
-          return;
-        }
-        if(!navigator.locks?.request){
-          additionalWarning="Web Locksが使えません。送信処理との排他確認ができないため復旧を中止しました。";
-          retry.disabled=true;
-          return;
-        }
-        let recovered=false;
-        try{
-          await navigator.locks.request(SEND_LOCK_NAME,{mode:"exclusive",ifAvailable:true},async lock=>{
-            if(!lock)return;
-            // Re-check after all waits while under the same lock used for POST.
-            if(batchRecoveryBlockReason())return;
-            if(GM_getValue(BATCH_KEYS.ownerToken,"")!==owner)return;
-            recovered=clearConfirmedDormantBatch(owner);
-          });
-        }catch(error){console.warn("[SUUMO JJ 上位版] 保存状態の復旧失敗",error);}
-        if(!recovered){
-          additionalWarning="状態が変わったか送信保護が働いたため、保存状態を変更せず停止しました。";
-          paint();
-          return;
-        }
-      }
-      overlay.remove();
-      toast("申告の送信履歴・設定を保持したまま、検索を再開します。",3600);
-      if(isAuthorizedIeloveBatchSearch()&&!isAnyBatchActive())void collectIeloveSuumoResults();
-    };
-    paint();
-  }
+  // Recovery UI deliberately removed: no archived queue to recover.
 
   async function scanIeloveSuumoPages(searchUrl, propertyIndex, forceFetchFirst=false) {
     const scanStarted=performance.now();
@@ -3298,6 +3207,7 @@
       else if(latest.index!==owner?.index)reason="対象物件番号が変更された";
       else if(latest.searches[propertyIndex]?.url!==searchUrl)reason="検索条件が途中で変更された";
       else if(isAnyBatchActive())reason="申告処理へ移行していた";
+      if (tabRuntimeFault) reason="タブ専用の保存状態を確認できない";
       if(reason){
         const error=new Error("取得中に対象物件または実行状態が変わったため停止しました");
         error.scanStateChanged=true;
@@ -3463,6 +3373,7 @@
 
   async function collectIeloveSuumoResults() {
     if (ieloveCollecting || isBatchActive() || !isAuthorizedIeloveBatchSearch()) return;
+    if (tabRuntimeFault) return failTabRuntime();
     const handoff = getIeloveHandoff();
     if (!handoff) return;
     const index = Math.max(0, Math.min(Number(handoff.index) || 0, handoff.records.length - 1));
@@ -3491,8 +3402,7 @@
             console.warn("[SUUMO JJ 上位版] 検索を安全停止:",error?.scanStateReason||"状態不一致");
             toast("検索の対象・実行状態が途中で切り替わりました。誤取得を防ぐため停止しました。"
               +"\n原因候補："+(error?.scanStateReason||"状態不一致")
-              +"\n実行状態が残っている場合は診断画面を確認してください。",12000);
-            if(error?.scanStateReason==="申告処理へ移行していた")showStaleBatchRecoveryDialog();
+              +"\nこのタブの処理が終わっているか確認してください。",12000);
             return;
           }
           console.warn("[SUUMO JJ 上位版] 検索取得失敗",attempt+"/"+MAX_STAGE_ATTEMPTS,message);
@@ -3678,7 +3588,7 @@
 
   const IELOVE_BATCH_EXECUTION_KEY = "ielove_suumo_execution_v1";
   function getIeloveExecution() {
-    const state = GM_getValue(IELOVE_BATCH_EXECUTION_KEY, null);
+    const state = tabGet(IELOVE_BATCH_EXECUTION_KEY, null);
     return state && Array.isArray(state.items) && state.items.length ? state : null;
   }
   function currentIeloveExecutionItem() {
@@ -3705,7 +3615,7 @@
     if (!state.items[index] || state.items[index].url !== getBatchUrls()[index]) return;
     state.items[index].status = status;
     state.items[index].updatedAt = Date.now();
-    GM_setValue(IELOVE_BATCH_EXECUTION_KEY, state);
+    tabSet(IELOVE_BATCH_EXECUTION_KEY, state);
   }
   function ieloveFormMismatch(profile) {
     const mismatched = [];
@@ -3782,7 +3692,7 @@
       return;
     }
     if (!confirm(handoff.records.length + "物件から" + items.length + "掲載を指摘対象として選択しました。\n\n実際にSUUMOへ申告処理を開始しますか？")) return;
-    GM_setValue(IELOVE_BATCH_EXECUTION_KEY, { items, startedAt:Date.now(), finishedAt:null });
+    tabSet(IELOVE_BATCH_EXECUTION_KEY, { items, startedAt:Date.now(), finishedAt:null });
     GM_deleteValue(IELOVE_SUUMO_HANDOFF_KEY);
     if (!setBatch(items.map(item => item.url), 0, "ielove")) return;
     location.href = items[0].url;
@@ -3918,19 +3828,19 @@
 
     if (location.hostname !== "suumo.jp") return;
 
-    // Listen for a live owner even on tabs where the normal settings UI cannot
-    // initialize. Old owners without the responder still require user confirmation.
-    startBatchOwnerResponder();
+    discardOpenedTabRuntime();
+    if (tabRuntimeFault) return;
+
+    // Runtime progress belongs to this tab; no stale global-batch recovery UI.
     addMainButtons();
     if (!requireProfileManager()) return;
 
-    if (isAuthorizedIeloveBatchSearch() && isAnyBatchActive()) {
-      // A stale owner token in this same search tab used to suppress all
-      // recovery UI. Only actual stamped listing/form pages own an active item.
-      showStaleBatchRecoveryDialog();
-      return;
-    }
     if (!isBatchActive() && isAuthorizedIeloveBatchSearch()) {
+      const handoff=getIeloveHandoff();
+      if (handoff?.token && tabGet("last_search_token",null)!==handoff.token) {
+        tabSet("last_search_token",handoff.token);
+        tabSet(ISSUE_LOG_KEY,[]);
+      }
       await collectIeloveSuumoResults();
     }
 
