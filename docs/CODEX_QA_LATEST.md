@@ -1,3 +1,56 @@
+# Codex QA 最新作業 — 8.0.2方式へのタブ管理再設計（2026-10-26）
+
+**現在：test版へ修正済み。新しいコードのCodex・Chromium全体検証は未実施。本番dev・一般版mainへの反映は禁止。**
+
+## なぜ再設計したか
+
+実SUUMOの③申告入力画面で、上位版8.0.3〜8.0.5は「処理情報を確認できない」安全停止になり、左下「指摘設定」UIと自動入力が消えた。href="#"・JavaScript起動対応を含む8.0.5も解消できなかった。
+
+履歴を比較すると、8.0.2以前はGM_getValue/GM_setValue/GM_deleteValueで**現在の実行情報を掲載タブと申告タブ間で共有**していた。8.0.3からタブ専用sessionStorageとwindow.name照合が追加され、初期化がUI表示より前で停止する経路を導入した。
+
+## 今回のtest変更
+
+1. `SUUMO-DEV.user.js`：現在進行中の一括処理値を8.0.2と同様のTampermonkey GM共有保存へ戻した。既存のデータキー、所有者トークン、物件ID、履歴スタンプ、遷移チケット、Web Locks送信ガードなどは維持。タブ名比較・複雑な新規ポップアップ状態照合は撤去した。**左下UIの作成を実行状態の確認より先にする**。旧進捗復元UIは戻さない。
+2. `tests/report-popup-handoff.cjs`：GMを共有する2タブ、既存タブだけの所有者トークン、新規タブの再開禁止、異常・失敗時の停止とUI初期化順を検査するよう更新。
+3. `tests/tab-runtime-lifecycle.cjs`：古いsessionStorage専用テストを新方式へ更新。
+
+前回の単独V8モックでは**12件PASS・0 FAIL**。この数はNode/Chromiumの全体回帰件数ではない。GitHubの過去QA**169件PASSは前方式の結果**であり、新方式の合格数として絶対に流用しないこと。
+
+**注意：**GMの実行情報はタブを閉じる瞬間に確実に削除されるわけではない。ただし、新しく独立したタブはタブ所有者トークンを持たないため、古いGMのactive/indexだけから再開しない。新規実行時には処理情報を上書きする。閉じたタブ復元、長期再開、過去の176/201復元UIは追加しない。実行状態の物理的な即時削除まで保証していない点は最終報告に明記すること。
+
+## Codexへ：検証・必要な最小修正
+
+現在の`test`をチェックアウトし、まずコードの構文・単体・Chromium統合テストを実行。特に`tests/send-safety-browser.cjs`や`tests/tab-runtime-fixture.cjs`は以前のタブ専用GM非共有前提で書かれている。**旧方式を要求するテストだけを新しい仕様に合わせて修正し、失敗を隠さず新旧の違いを報告する**。テストの期待値を安易に緩めて合格にしない。保護対象や送信安全性のテストは維持し、旧テストの失敗理由を「仕様変更」か「真の不具合」に分類。
+
+最低限以下を実際のChromium上で検査：
+- SUUMO掲載タブ②のリンク`href="#"`＋JSの`window.open("/jj/chintai/shiryou/FR400FG001/")`で③へ移動し、**左下UIが表示され自動入力される**。GM共通、sessionStorageタブ別の組み合わせ。
+- 入力③→確認④→完了⑤の同じタブ内遷移、2物件連続の正常な進行と記録物件の一致。
+- 親②と子③が同時表示されても意図せず2回の送信・次物件進行をしない（既存Web Locks送信競合、送信ガード、確認前250ms競合等を保持）。
+- 古いGM進捗176/201だけ残る状態で、所有トークンのない独立新規タブは動かず、検索・新規バッチ開始を妨げない。古い進捗復旧ポップアップは出ない。
+- 再読み込み・ページ戻り・送信不明・HTTP500・遅延完了・異なる物件・不正チケット・フォーム入力不一致を安全に拒否。
+- いえらぶの取得・編集・会社選択と、その引継ぎを含む全体回帰。設定や永続除外を消さない。
+
+実サイトへのPOSTは禁止。**本体変更はtestだけ**。元の`main`・`dev`・配布ファイル・manifestは変更禁止。問題があればtestで最小修正と再検証を実施。結果はこの同じ`docs/CODEX_QA_LATEST.md`に実測数・不合格理由・残リスクを上書きする。別のテストブランチや日付別報告は作らない。
+
+テスト実行例：
+
+```bash
+node --check SUUMO-DEV.user.js
+node --test tests/report-popup-handoff.cjs
+node --test tests/tab-runtime-lifecycle.cjs
+node tests/send-safety-browser.cjs
+node tests/search-state-browser.cjs
+node --test tests/fast-report-navigation.cjs
+node --test tests/v8-ui-lightweight.cjs
+node tests/search-regression.cjs
+node tests/optimization.cjs
+node tests/memory.cjs
+```
+
+---
+
+## 以前の検証記録（前方式。新コードの合格実績ではない）
+
 # Codex QA 最新結果 — href="#" の申告タブ引継ぎ
 
 更新：2026-10-26 19:22 JST
