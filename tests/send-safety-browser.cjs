@@ -112,6 +112,47 @@ await test('real-style listing popup: same-origin input tab keeps UI and batch w
   return evidence;
  }finally{await ctx.close()}
 });
+await test('real SUUMO link href=# opens parameter-free input popup with settings UI and active batch',async()=>{
+ const ctx=await context({n:1,route:r=>{
+  const path=new URL(r.request().url()).pathname;
+  const listingPage=html('<a id="js-bknToiawaseFr" href="#">指摘フォームを開く</a>'
+   +'<script>document.querySelector("#js-bknToiawaseFr").addEventListener("click",e=>{e.preventDefault();window.open("/jj/chintai/shiryou/FR400FG001/","suumo-report-popup");});</script>');
+  return r.fulfill({contentType:'text/html; charset=utf-8',
+   body:path.startsWith('/chintai/bc_')?listingPage:
+    path.includes('/FR400FG001/')?inputHtml(0):html('unused')});
+ }});
+ try{
+  const original=await ctx.newPage();
+  await original.goto(listing(0));
+  assert.equal(await original.evaluate(urls=>{
+   const ok=qa.setBatch(urls,0,'ielove');
+   return ok&&qa.bindListingToTab()&&qa.queuePageTransition('input');
+  },[listing(0)]),true);
+  const opening=ctx.waitForEvent('page');
+  await original.locator('#js-bknToiawaseFr').click();
+  const popup=await opening;
+  await popup.waitForLoadState('domcontentloaded');
+  const evidence=await popup.evaluate(async()=>{
+   await qa.init();
+   return {url:location.pathname,opener:!!window.opener,
+    href:window.opener?.document.querySelector('#js-bknToiawaseFr')?.getAttribute('href'),
+    active:qa.isBatchActive(),
+    settings:!!document.getElementById('tm-main-buttons'),
+    panel:!!document.getElementById('tm-batch-status'),
+    parentActive:window.opener?.sessionStorage.getItem('suumo_advanced_tab_runtime_v1_suumo_batch_active'),
+    toast:document.querySelector('#tm-toast')?.textContent||''};
+  });
+  assert.equal(evidence.href,'#');
+  assert.equal(evidence.url,'/jj/chintai/shiryou/FR400FG001/');
+  assert.equal(evidence.opener,true);
+  assert.equal(evidence.active,true);
+  assert.equal(evidence.parentActive,'false');
+  assert.equal(evidence.settings,true);
+  assert.equal(evidence.panel,true);
+  assert.doesNotMatch(evidence.toast,/安全停止：タブ専用の保存状態を確認できません/);
+  return evidence;
+ }finally{await ctx.close()}
+},'browser');
 for(const mode of ['wrong-input','revoke-fails'])await test('popup safety: '+mode,async()=>{
  const ctx=await context({n:1,route:r=>r.fulfill({contentType:'text/html; charset=utf-8',body:new URL(r.request().url()).pathname.startsWith('/chintai/bc_')?html('<a id="js-bknToiawaseFr" target="suumo-report-popup" rel="opener" href="'+form(0,1)+'">申告</a>'):inputHtml(1)})});
  try{
