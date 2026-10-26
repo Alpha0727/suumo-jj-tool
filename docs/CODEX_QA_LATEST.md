@@ -1,3 +1,31 @@
+# 2026-10-26：申告入力タブの引継ぎ修正 — 再検証待ち
+
+**重要：下記「132件PASS」は今回のタブ引継ぎ修正より前の結果です。修正後の全体検証は未実施であり、本番版 `dev` に反映していません。**
+
+今回の変更は次の3ファイルのみ：
+- `SUUMO-DEV.user.js`：②物件掲載タブから正当に開いた③申告入力タブに、物件・タブ所有者・90秒以内のinput遷移チケットが一致する場合だけ現在の実行情報を引き渡し、②側の自動処理を停止する
+- `tests/report-popup-handoff.cjs`：正規新規タブ、空の新規タブ、別物件、不正チケット、送信中状態等の模擬テスト
+- `tests/send-safety-browser.cjs`：Chromiumで実際に名前付きの新規タブを開き、③側の指摘設定UI・進捗パネル・タブ状態を検査するケースを追加
+
+検証時の実行例：
+```bash
+node --check SUUMO-DEV.user.js
+node --test tests/report-popup-handoff.cjs
+QA_FILTER='real-style listing popup' node tests/send-safety-browser.cjs
+node tests/send-safety-browser.cjs
+node tests/search-state-browser.cjs
+node --test tests/tab-runtime-lifecycle.cjs
+node --test tests/fast-report-navigation.cjs
+node --test tests/v8-ui-lightweight.cjs
+node tests/search-regression.cjs
+node tests/optimization.cjs
+node tests/memory.cjs
+```
+
+Codexは、実行した新しいテストの実測PASS/FAIL数・実ブラウザDOMでの成功/失敗・原因修正・リグレッションをこのファイルに**上書き**すること。旧132件を新コードのPASS数に流用しない。実SUUMOへ送信しない。**`main`・`dev`への変更は禁止**。テストの結果が合格になってから、本番反映を検討する。
+
+---
+
 # Codex QA 最新結果 — 上位版 8.0.3 TEST
 
 更新日時：2026-10-25 19:47 JST
