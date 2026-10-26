@@ -101,7 +101,8 @@
   function tabGet(key, fallback) {
     if (tabRuntimeFault) return fallback;
     try {
-      const value=GM_getValue(key, fallback);
+      const value=GM_getValue(key, undefined);
+      if (value === undefined) return fallback;
       if (!validTabRuntimeValue(key, value)) throw new Error("Invalid execution state");
       return value;
     } catch (_) {
