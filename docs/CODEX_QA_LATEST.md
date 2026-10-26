@@ -1,3 +1,41 @@
+# Codex QA 最新作業：実SUUMOの href="#" タブ引継ぎ
+
+**現状：test版の最小修正を反映。今回の修正後のCodex・Chromium全体検証は未実施。本番devへの反映は禁止。**
+
+ユーザーが実際のSUUMOで確認した事項：
+- 掲載ページ `/chintai/bc_100531168931/` の `#js-bknToiawaseFr` は `href="#"`、インライン `onclick` 属性なし。
+- JavaScriptで別タブに開く申告入力画面は `https://suumo.jp/jj/chintai/shiryou/FR400FG001/`（クエリ・ハッシュなし）。
+- 旧8.0.4は `href="#"` を即拒否しており、その後タブ情報の不一致判定から安全停止し、左下UI・自動入力が消えていた。
+
+今回、**testブランチのみ**以下の3つを変更：
+1. `SUUMO-DEV.user.js`：`acceptReportPopupHandoff()` 内に、`href === "#"` で正規のパラメータなしの申告入力URLを開いた場合を追加。物件ID・有効なINPUT遷移チケット・owner・stage・送信ガードの照合、親タブ停止→子タブ有効化の順序を維持。旧来のURL記載リンクの厳密照合も維持。
+2. `tests/report-popup-handoff.cjs`：`href="#"` の正規popup（コピーあり/なし）、不正URL・異物件・古いチケット等の拒否ケースを追加。
+3. `tests/send-safety-browser.cjs`：`href="#"` にaddEventListenerでwindow.openする実ブラウザ型の模擬ケースを追加し、左下設定UI・進捗表示・元タブ非稼働・保存エラーなしを検査。
+
+この会話の独立したJavaScript模擬確認：**15条件PASS、0件FAIL**（Node/Playwright/Codex全体実行ではない）。構文チェック済み。
+
+**Codexへの次の作業**：最新`test`を取得し、まず下記を再実行。失敗があれば原因を確認し、`test`だけ最小修正→再実行。合格後にこの同じレポートを上書きし、今回の実測件数を記入すること。
+
+```bash
+node --check SUUMO-DEV.user.js
+node --test tests/report-popup-handoff.cjs
+QA_FILTER='real SUUMO link href=#' node tests/send-safety-browser.cjs
+node tests/send-safety-browser.cjs
+node tests/search-state-browser.cjs
+node --test tests/tab-runtime-lifecycle.cjs
+node --test tests/fast-report-navigation.cjs
+node --test tests/v8-ui-lightweight.cjs
+node tests/search-regression.cjs
+node tests/optimization.cjs
+node tests/memory.cjs
+```
+
+必ず`href="#"`からパラメータなしの入力ページを開く動作と、通常のhrefにURLがある既存の処理の両方を確認する。モックのみで実SUUMOのPOSTはしない。**一般版main、配信版dev、latest-dev.jsonは変更しない。** 検証済みの旧156件と今回のテスト結果を混同しないこと。
+
+---
+
+## 以前のCodex検証結果（今回の href="#" 修正より前）
+
 # Codex QA 最新結果 — 申告タブ引継ぎ・全体回帰
 
 更新：2026-10-26 13:40 JST
