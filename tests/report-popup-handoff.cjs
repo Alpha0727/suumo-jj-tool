@@ -35,12 +35,15 @@ function scenario(opts={}){
   itemId:"item-1",at:Date.now()-(opts.expired?200000:300)
  }));
  if(opts.cloned!==false)for(const [key,value] of parent.state)child.setItem(key,value);
+ const input="https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=123456789";
+ if(opts.revokeFails){const set=parent.setItem;parent.setItem=(k,v)=>{if(k===prefix+'suumo_batch_active'&&v==='false')throw Error('synthetic parent write failure');return set(k,v)}}
+ if(opts.childFailsKey){const set=child.setItem;child.setItem=(k,v)=>{if(k===opts.childFailsKey)throw Error('synthetic child write failure');return set(k,v)}}
  const opener={closed:false,name:"parent-tab",sessionStorage:parent,
   location:{origin:"https://suumo.jp",pathname:opts.parentPath||"/chintai/bc_123456789/"},
-  document:{querySelector:()=>opts.missingLink?null:{}}};
+  document:{querySelector:()=>opts.missingLink?null:{getAttribute:k=>k==='href'?(opts.linkHref||input):null}}};
  const browserWindow={opener:opts.noOpener?null:opener,name:""};
  const context={
-  window:browserWindow,sessionStorage:child,location:{origin:"https://suumo.jp"},
+  URL,window:browserWindow,sessionStorage:child,location:{origin:"https://suumo.jp",href:opts.childHref||input},
   BATCH_KEYS:{active:"suumo_batch_active",urls:"suumo_batch_urls",index:"suumo_batch_index",
    ownerToken:"suumo_batch_owner_token",stage:"suumo_batch_stage",submitting:"suumo_batch_submitting"},
   TAB_RUNTIME_PREFIX:prefix,TAB_WINDOW_ID_KEY:storageKey,TAB_OWNER_TOKEN_KEY:ownerKey,
@@ -98,4 +101,23 @@ test("Existing duplicate/send and reloading safety code remains in place",()=>{
  assert.match(src,/function failTabRuntime\(/);
  assert.match(src,/\/\/ @version\s+8\.0\.3/);
  new vm.Script(src);
+});
+
+test("Reject input page different from the listing's actual form link",()=>{
+ const f=scenario({childHref:'https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=987654321'});
+ assert.equal(f.run(),false);assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'true');
+});
+test("Reject form link explicitly naming a different listing",()=>{
+ const wrong='https://suumo.jp/jj/chintai/shiryou/FR400FG001/?bc=987654321';
+ const f=scenario({linkHref:wrong,childHref:wrong});assert.equal(f.run(),false);
+});
+test("Source revocation failure never publishes a fresh active child identity",()=>{
+ const f=scenario({revokeFails:true});assert.equal(f.run(),false);
+ assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'true');
+ assert.notEqual(f.browserWindow.name,'suumo-jj-report-tab:fresh-unique-child');
+});
+
+for(const key of ['suumo_advanced_tab_runtime_v1_suumo_batch_index','suumo_advanced_browser_tab_identity_v1'])test('Partial child write remains inactive: '+key,()=>{
+ const f=scenario({childFailsKey:key});assert.equal(f.run(),false);
+ assert.equal(f.parent.getItem(f.prefix+'suumo_batch_active'),'false');assert.equal(f.child.getItem(f.prefix+'suumo_batch_active'),'false');
 });

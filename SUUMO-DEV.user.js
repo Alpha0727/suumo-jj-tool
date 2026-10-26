@@ -134,8 +134,18 @@
       if (opener.closed || opener.location.origin!==location.origin) return false;
     } catch (_) { return false; }
     try {
-      if (!/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) ||
-          !opener.document.querySelector("#js-bknToiawaseFr")) return false;
+      const reportLink=opener.document.querySelector("#js-bknToiawaseFr");
+      if (!/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) || !reportLink) return false;
+      // The input ticket alone does not identify the actual destination page.
+      // Accept only the concrete input URL advertised by this listing's link.
+      const href=String(reportLink.getAttribute("href")||"").trim();
+      if(!href || href.startsWith("#") || /^javascript:/i.test(href))return false;
+      const destination=new URL(href,opener.location.href||location.origin),opened=new URL(location.href);
+      if(destination.origin!==location.origin || destination.username || destination.password ||
+         destination.pathname!=="/jj/chintai/shiryou/FR400FG001/")return false;
+      destination.hash="";opened.hash="";
+      destination.searchParams.sort();opened.searchParams.sort();
+      if(destination.href!==opened.href)return false;
       const originState=opener.sessionStorage;
       const parentIdentity=originState.getItem(TAB_WINDOW_ID_KEY);
       if (!parentIdentity || opener.name!==parentIdentity) return false;
@@ -150,6 +160,7 @@
       const sourceListing=urls?.[index]||"";
       const expectedId=String(sourceListing.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
       const openedId=String(opener.location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
+      if(destination.searchParams.getAll("bc").some(id=>id!==expectedId))return false;
       const age=Date.now()-Number(ticket?.at);
       if (!active || !Array.isArray(urls) || !Number.isInteger(index) ||
           index<0 || index>=urls.length || !owner || owner!==tabOwner ||
@@ -172,16 +183,21 @@
              TAB_UNCERTAIN_SEND_KEY,PAGE_NAV_TICKET_KEY,PAGE_ACTIVE_ENTRY_KEY,
              SEND_CLAIM_STORAGE_KEY,FAST_REPORT_NAV_KEY].includes(key)) keys.push(key);
       }
-      for(const key of keys) {
-        const value=originState.getItem(key);
-        if(value!==null)sessionStorage.setItem(key,value);
+      const values=keys.map(key=>[key,originState.getItem(key)]);
+      const activeKey=TAB_RUNTIME_PREFIX+BATCH_KEYS.active;
+      // Never publish an independently resumable child until revoking the source
+      // succeeded. Keep a partly copied child inactive even after a reload.
+      originState.setItem(activeKey,JSON.stringify(false));
+      sessionStorage.setItem(activeKey,JSON.stringify(false));
+      for(const [key,value] of values) {
+        if(value!==null && key!==activeKey)sessionStorage.setItem(key,value);
       }
       // The child owns the current operation. Returning to the listing tab
       // after closing the child must never restart or resend the old item.
       const fresh="suumo-jj-report-tab:"+createBatchOwnerToken();
       sessionStorage.setItem(TAB_WINDOW_ID_KEY,fresh);
       window.name=fresh;
-      originState.setItem(TAB_RUNTIME_PREFIX+BATCH_KEYS.active,JSON.stringify(false));
+      sessionStorage.setItem(activeKey,JSON.stringify(true));
       return true;
     } catch (_) {
       failTabRuntime(); // Never continue after a partly applied handoff.

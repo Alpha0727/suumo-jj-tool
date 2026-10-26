@@ -112,6 +112,31 @@ await test('real-style listing popup: same-origin input tab keeps UI and batch w
   return evidence;
  }finally{await ctx.close()}
 });
+for(const mode of ['wrong-input','revoke-fails'])await test('popup safety: '+mode,async()=>{
+ const ctx=await context({n:1,route:r=>r.fulfill({contentType:'text/html; charset=utf-8',body:new URL(r.request().url()).pathname.startsWith('/chintai/bc_')?html('<a id="js-bknToiawaseFr" target="suumo-report-popup" rel="opener" href="'+form(0,1)+'">申告</a>'):inputHtml(1)})});
+ try{
+  const p=await ctx.newPage();await p.goto(listing(0));await p.evaluate(url=>{qa.setBatch([url],0,'ielove');qa.bindListingToTab();qa.queuePageTransition('input')},listing(0));
+  if(mode==='revoke-fails')await p.evaluate(()=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(this===sessionStorage&&k==='suumo_advanced_tab_runtime_v1_suumo_batch_active'&&v==='false')throw Error('synthetic parent write failure');return set.call(this,k,v)}});
+  const opening=ctx.waitForEvent('page');await p.evaluate(url=>window.open(url,'suumo-report-popup'),mode==='wrong-input'?form(1,1):form(0,1));const b=await opening;await b.waitForLoadState();
+  await b.evaluate(()=>qa.init());
+  if(mode==='revoke-fails'){await b.reload();await b.evaluate(()=>qa.init())}
+  const state=await b.evaluate(()=>({active:qa.isBatchActive(),parentActive:window.opener.sessionStorage.getItem('suumo_advanced_tab_runtime_v1_suumo_batch_active'),stage:qaGet('suumo_batch_stage')}));
+  assert.equal(state.active,false,JSON.stringify(state));assert.equal(state.parentActive,'true');return state;
+ }finally{await ctx.close()}
+},'browser');
+for(const copy of ['copied','empty'])await test('real-style listing popup: full two-item queue '+copy,async()=>{
+ const ctx=await context({auto:true,n:2,route:r=>{const u=new URL(r.request().url());const phase=u.pathname.includes('FR400FG003')?'complete':u.pathname.includes('FR400FG002')?'confirm':u.pathname.includes('FR400FG001')?'input':'listing';const i=phase==='listing'?Number(u.pathname.match(/bc_(\d+)/)?.[1])-100000001:Number(u.searchParams.get('fixture'));let body=phase==='listing'?html(Number.isFinite(i)?'<a id="js-bknToiawaseFr" target="suumo-report-popup" rel="opener" href="'+form(i,1)+'">申告</a>':'開始'):phase==='input'?inputHtml(i):phase==='confirm'?sendHtml(i,true):html('模擬完了');if(copy==='empty'&&phase==='input')body+='<script>for(const key of Object.keys(sessionStorage))if(!key.startsWith("qa-"))sessionStorage.removeItem(key)</script>';return r.fulfill({contentType:'text/html; charset=utf-8',body})}});
+ try{
+  const pages=[];ctx.on('page',p=>pages.push(p));const original=await ctx.newPage();await original.goto('https://suumo.jp/qa-start');await original.evaluate(urls=>qa.setBatch(urls,0,'ielove'),[listing(0),listing(1)]);const first=ctx.waitForEvent('page');await original.goto(listing(0));const child=await first;await child.waitForLoadState();const second=ctx.pages().find(p=>p!==original&&p!==child)||await ctx.waitForEvent('page');await second.waitForLoadState();
+  await second.waitForFunction(()=>qaGet('suumo_batch_active')===false&&qaGet('ielove_suumo_execution_v1')?.items.every(x=>x.status==='complete'),{},{timeout:20000});
+  const result=await second.evaluate(()=>({clicks:JSON.parse(localStorage.getItem('qa-clicks')||'[]'),items:qaGet('ielove_suumo_execution_v1').items,sentinel:GM_getValue('settingsSentinel')}));assert.equal(result.clicks.length,2);assert.equal(new Set(result.clicks.map(x=>x.actual)).size,2);assert.ok(result.clicks.every(x=>x.actual===x.guard.url));for(const p of [original,child])assert.equal(await p.evaluate(()=>qa.isBatchActive()),false);assert.equal(result.sentinel,'KEEP');return result;
+ }finally{await ctx.close()}
+},'browser');
+await test('real-style listing popup: cross-origin opener keeps ordinary settings UI',async()=>{
+ const ctx=await context({auto:true,route:r=>r.fulfill({contentType:'text/html; charset=utf-8',body:html('架空ページ')})});try{
+  const p=await ctx.newPage();await p.goto('https://cloud.ielove.jp/rent/');const opening=ctx.waitForEvent('page');await p.evaluate(url=>window.open(url,'suumo-cross-origin-report'),form(0,1));const b=await opening;await b.waitForLoadState();await b.locator('#tm-main-buttons').waitFor();const result=await b.evaluate(()=>{let isolated=false;try{void window.opener.location.origin}catch(e){isolated=e.name==='SecurityError'}return{isolated,active:qa.isBatchActive(),toast:document.querySelector('#tm-toast')?.textContent||'',settings:!!document.querySelector('#tm-main-buttons')}});assert.equal(result.isolated,true);assert.equal(result.active,false);assert.equal(result.settings,true);assert.doesNotMatch(result.toast,/タブ専用の保存状態を確認できません/);return result;
+ }finally{await ctx.close()}
+},'browser');
 await test('new opened tab stays independent on its later same-tab reload',async()=>{const {ctx,p}=await unit();try{
  await p.evaluate(()=>localStorage.setItem('qa-auto','1'));const made=ctx.waitForEvent('page');await p.evaluate(url=>window.open(url,'_blank'),listing(0));const b=await made;await b.waitForURL(listing(0));await b.locator('#tm-main-buttons').waitFor();
  assert.equal(await b.evaluate(()=>qa.isAnyBatchActive()),false);
