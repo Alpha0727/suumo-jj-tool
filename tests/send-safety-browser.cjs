@@ -86,8 +86,9 @@ await test('real-style listing popup: same-origin input tab keeps UI and batch w
   const original=await ctx.newPage();
   await original.goto(listing(0));
   assert.equal(await original.evaluate(urls=>{const ok=qa.setBatch(urls,0,'ielove');return ok&&qa.bindListingToTab()},[listing(0)]),true);
+  assert.equal(await original.evaluate(()=>qa.queuePageTransition('input')),true);
   const opening=ctx.waitForEvent('page');
-  await original.evaluate(()=>qa.handleListingPage());
+  await original.locator('#js-bknToiawaseFr').click();
   const popup=await opening;
   await popup.waitForLoadState('domcontentloaded');
   const evidence=await popup.evaluate(async()=>{
