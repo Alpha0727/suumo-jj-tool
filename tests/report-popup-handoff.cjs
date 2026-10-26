@@ -78,6 +78,17 @@ for(const [name,config] of [
  assert.equal(f.run(),false);
  assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
 });
+test("Cross-origin opener is ignored without flagging the tab state as corrupt",()=>{
+ const f=scenario({cloned:false});
+ const ctx={window:{opener:{closed:false,location:{get origin(){throw Error("cross-origin")}}}},
+  sessionStorage:f.child,location:{origin:"https://suumo.jp"},
+  isInputPage:()=>true,failTabRuntime:()=>{throw Error("wrongly flagged as corrupt")}};
+ // Keep all remaining bindings from the scenario via its compiled callable:
+ // swapping just the opener is sufficient and must not touch the original tab.
+ f.browserWindow.opener={closed:false,location:{get origin(){throw Error("cross-origin")}}};
+ assert.equal(f.run(),false);
+ assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
+});
 test("Only first popup can take ownership of an active listing",()=>{
  const a=scenario();
  assert.equal(a.run(),true);
