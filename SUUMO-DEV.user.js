@@ -136,16 +136,26 @@
     try {
       const reportLink=opener.document.querySelector("#js-bknToiawaseFr");
       if (!/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) || !reportLink) return false;
-      // The input ticket alone does not identify the actual destination page.
-      // Accept only the concrete input URL advertised by this listing's link.
+      // SUUMO's real listing link may use href="#" and attach its popup
+      // handler with JavaScript rather than advertising the input URL.
+      // Such a link is valid only for the exact parameter-free input page.
+      // Preserve strict URL matching when the link contains a real URL.
       const href=String(reportLink.getAttribute("href")||"").trim();
-      if(!href || href.startsWith("#") || /^javascript:/i.test(href))return false;
-      const destination=new URL(href,opener.location.href||location.origin),opened=new URL(location.href);
-      if(destination.origin!==location.origin || destination.username || destination.password ||
-         destination.pathname!=="/jj/chintai/shiryou/FR400FG001/")return false;
-      destination.hash="";opened.hash="";
-      destination.searchParams.sort();opened.searchParams.sort();
-      if(destination.href!==opened.href)return false;
+      const opened=new URL(location.href);
+      let destination=null;
+      if(href==="#"){
+        if(opened.origin!==location.origin || opened.username || opened.password ||
+           opened.pathname!=="/jj/chintai/shiryou/FR400FG001/" ||
+           opened.search || opened.hash)return false;
+      }else{
+        if(!href || href.startsWith("#") || /^javascript:/i.test(href))return false;
+        destination=new URL(href,opener.location.href||location.origin);
+        if(destination.origin!==location.origin || destination.username || destination.password ||
+           destination.pathname!=="/jj/chintai/shiryou/FR400FG001/")return false;
+        destination.hash="";opened.hash="";
+        destination.searchParams.sort();opened.searchParams.sort();
+        if(destination.href!==opened.href)return false;
+      }
       const originState=opener.sessionStorage;
       const parentIdentity=originState.getItem(TAB_WINDOW_ID_KEY);
       if (!parentIdentity || opener.name!==parentIdentity) return false;
@@ -160,7 +170,7 @@
       const sourceListing=urls?.[index]||"";
       const expectedId=String(sourceListing.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
       const openedId=String(opener.location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
-      if(destination.searchParams.getAll("bc").some(id=>id!==expectedId))return false;
+      if(destination && destination.searchParams.getAll("bc").some(id=>id!==expectedId))return false;
       const age=Date.now()-Number(ticket?.at);
       if (!active || !Array.isArray(urls) || !Number.isInteger(index) ||
           index<0 || index>=urls.length || !owner || owner!==tabOwner ||
