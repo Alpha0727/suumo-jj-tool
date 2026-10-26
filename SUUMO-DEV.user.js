@@ -892,7 +892,9 @@
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
     const unresolvedPost=tabGet(FINAL_SEND_GUARD_KEY,null);
     if (tabRuntimeFault) return false;
-    if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
+    // A closed previous tab may leave a GM guard behind. Only a still-owned
+    // send in THIS tab can block a new run; fresh tabs cannot resume that job.
+    if(sameTabHasUnresolvedPost||(isBatchOwnerTab()&&unresolvedPost?.status==="sending")){
       toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
       return false;
     }
