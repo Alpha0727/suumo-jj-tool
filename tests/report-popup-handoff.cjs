@@ -80,11 +80,6 @@ for(const [name,config] of [
 });
 test("Cross-origin opener is ignored without flagging the tab state as corrupt",()=>{
  const f=scenario({cloned:false});
- const ctx={window:{opener:{closed:false,location:{get origin(){throw Error("cross-origin")}}}},
-  sessionStorage:f.child,location:{origin:"https://suumo.jp"},
-  isInputPage:()=>true,failTabRuntime:()=>{throw Error("wrongly flagged as corrupt")}};
- // Keep all remaining bindings from the scenario via its compiled callable:
- // swapping just the opener is sufficient and must not touch the original tab.
  f.browserWindow.opener={closed:false,location:{get origin(){throw Error("cross-origin")}}};
  assert.equal(f.run(),false);
  assert.equal(f.parent.getItem(f.prefix+"suumo_batch_active"),"true");
