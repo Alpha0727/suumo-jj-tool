@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.5
+// @version      8.0.6
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -72,18 +72,17 @@
     stage: "suumo_batch_stage"
   };
 
-  // Codex-only test model: active queue progress and send state are scoped to
-  // this SUUMO tab. Full navigations and reloads retain sessionStorage, while
-  // opening a fresh tab never inherits a closed tab's GM-backed queue history.
-  // Cross-origin いえらぶ→SUUMO handoff/settings remain GM-backed as needed.
-  const TAB_RUNTIME_PREFIX = "suumo_advanced_tab_runtime_v1_";
+  // Use the shared Tampermonkey execution state from v8.0.2.
+  // A browser tab may continue it only with the matching sessionStorage owner
+  // token, item ticket and stamped page context. Closed tabs cannot be resumed
+  // from an unrelated newly opened tab; no old-progress recovery UI is shown.
   let tabRuntimeFault = false;
   function failTabRuntime() {
     tabRuntimeFault = true;
     // Do not include corrupt values, exception messages, or profile data in logs.
-    console.warn("[SUUMO JJ TEST] タブ専用の保存状態を確認できないため安全停止");
+    console.warn("[SUUMO JJ 上位版] 処理情報を確認できないため安全停止");
     if (typeof document !== "undefined" && document.body) {
-      toast("安全停止：タブ専用の保存状態を確認できません。送信・自動進行を停止しました。設定は削除していません。", 11000);
+      toast("安全停止：処理情報を確認できません。送信・自動進行を停止しました。設定は削除していません。", 11000);
     }
   }
   function validTabRuntimeValue(key, value) {
@@ -96,161 +95,32 @@
     if (key === "suumo_batch_owner_token" || key === "suumo_batch_stage") return typeof value === "string" && !!value;
     return true;
   }
+  // The shared store transports ONLY the current execution between SUUMO
+  // listing and the real popup. It is not proof of tab ownership: sessionStorage
+  // owner/token + per-page ticket validation still gates every automatic action.
   function tabGet(key, fallback) {
     if (tabRuntimeFault) return fallback;
     try {
-      const value=sessionStorage.getItem(TAB_RUNTIME_PREFIX+key);
-      if (value === null) return fallback;
-      const parsed = JSON.parse(value);
-      if (!validTabRuntimeValue(key, parsed)) throw new Error("Invalid tab state");
-      return parsed;
-    } catch (error) {
+      const value=GM_getValue(key, undefined);
+      if (value === undefined) return fallback;
+      if (!validTabRuntimeValue(key, value)) throw new Error("Invalid execution state");
+      return value;
+    } catch (_) {
       failTabRuntime();
       return fallback;
     }
   }
   function tabSet(key, value) {
-    // On storage failure STOP rather than silently falling back to a persistent
-    // global store which might outlive the tab and cause a stale batch.
-    if (tabRuntimeFault) throw new Error("Tab state unavailable");
-    try { sessionStorage.setItem(TAB_RUNTIME_PREFIX+key, JSON.stringify(value)); }
-    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
+    if (tabRuntimeFault) throw new Error("Execution state unavailable");
+    try { GM_setValue(key, value); }
+    catch (_) { failTabRuntime(); throw new Error("Execution state unavailable"); }
   }
   function tabDelete(key) {
-    if (tabRuntimeFault) throw new Error("Tab state unavailable");
-    try { sessionStorage.removeItem(TAB_RUNTIME_PREFIX+key); }
-    catch (error) { failTabRuntime(); throw new Error("Tab state unavailable"); }
+    if (tabRuntimeFault) throw new Error("Execution state unavailable");
+    try { GM_deleteValue(key); }
+    catch (_) { failTabRuntime(); throw new Error("Execution state unavailable"); }
   }
 
-  // SUUMO normally opens the report input form from a listing in a new tab.
-  // Only an active listing tab with an exact pending INPUT ticket can hand off.
-  // This is a one-time live transfer, not a persistent batch/history restore.
-  function acceptReportPopupHandoff() {
-    if (!isInputPage() || !window.opener) return false;
-    // An ordinary report page can be opened from another origin. That does not
-    // represent a broken tab store, and must not hide the regular settings UI.
-    const opener=window.opener;
-    try {
-      if (opener.closed || opener.location.origin!==location.origin) return false;
-    } catch (_) { return false; }
-    try {
-      const reportLink=opener.document.querySelector("#js-bknToiawaseFr");
-      if (!/^\/chintai\/bc_(\d+)/i.test(opener.location.pathname) || !reportLink) return false;
-      // SUUMO's real listing link may use href="#" and attach its popup
-      // handler with JavaScript rather than advertising the input URL.
-      // Such a link is valid only for the exact parameter-free input page.
-      // Preserve strict URL matching when the link contains a real URL.
-      const href=String(reportLink.getAttribute("href")||"").trim();
-      const opened=new URL(location.href);
-      let destination=null;
-      if(href==="#"){
-        if(opened.origin!==location.origin || opened.username || opened.password ||
-           opened.pathname!=="/jj/chintai/shiryou/FR400FG001/" ||
-           opened.search || opened.hash)return false;
-      }else{
-        if(!href || href.startsWith("#") || /^javascript:/i.test(href))return false;
-        destination=new URL(href,opener.location.href||location.origin);
-        if(destination.origin!==location.origin || destination.username || destination.password ||
-           destination.pathname!=="/jj/chintai/shiryou/FR400FG001/")return false;
-        destination.hash="";opened.hash="";
-        destination.searchParams.sort();opened.searchParams.sort();
-        if(destination.href!==opened.href)return false;
-      }
-      const originState=opener.sessionStorage;
-      const parentIdentity=originState.getItem(TAB_WINDOW_ID_KEY);
-      if (!parentIdentity || opener.name!==parentIdentity) return false;
-      const localIdentity=sessionStorage.getItem(TAB_WINDOW_ID_KEY);
-      if (localIdentity && localIdentity!==parentIdentity) return false;
-      const read=k=>JSON.parse(originState.getItem(TAB_RUNTIME_PREFIX+k)||"null");
-      const urls=read(BATCH_KEYS.urls),index=read(BATCH_KEYS.index),
-            owner=read(BATCH_KEYS.ownerToken),active=read(BATCH_KEYS.active);
-      const tabOwner=originState.getItem(TAB_OWNER_TOKEN_KEY);
-      const item=JSON.parse(originState.getItem(TAB_ITEM_CONTEXT_KEY)||"null");
-      const ticket=JSON.parse(originState.getItem(PAGE_NAV_TICKET_KEY)||"null");
-      const sourceListing=urls?.[index]||"";
-      const expectedId=String(sourceListing.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
-      const openedId=String(opener.location.pathname.match(/\/chintai\/bc_(\d+)/i)?.[1]||"");
-      if(destination && destination.searchParams.getAll("bc").some(id=>id!==expectedId))return false;
-      const age=Date.now()-Number(ticket?.at);
-      if (!active || !Array.isArray(urls) || !Number.isInteger(index) ||
-          index<0 || index>=urls.length || !owner || owner!==tabOwner ||
-          !expectedId || expectedId!==openedId || !item?.id ||
-          item.ownerToken!==owner || item.index!==index || item.url!==sourceListing ||
-          ticket?.kind!=="input" || ticket.ownerToken!==owner ||
-          ticket.index!==index || ticket.url!==sourceListing || ticket.itemId!==item.id ||
-          !Number.isFinite(age) || age<0 || age>PAGE_TICKET_MAX_AGE_MS ||
-          read(BATCH_KEYS.stage)!==STAGES.LISTING ||
-          read(BATCH_KEYS.submitting)===true ||
-          read(FINAL_SEND_GUARD_KEY)!==null ||
-          originState.getItem(TAB_UNCERTAIN_SEND_KEY)==="1") return false;
-      // A report popup may receive a sessionStorage copy, or an empty store.
-      // In both cases use only the verified listing tab's current batch data.
-      const keys=[];
-      for(let i=0;i<originState.length;i++){
-        const key=originState.key(i);
-        if(key?.startsWith(TAB_RUNTIME_PREFIX) ||
-            [TAB_OWNER_TOKEN_KEY,TAB_ITEM_CONTEXT_KEY,TAB_SENT_CONTEXT_KEY,
-             TAB_UNCERTAIN_SEND_KEY,PAGE_NAV_TICKET_KEY,PAGE_ACTIVE_ENTRY_KEY,
-             SEND_CLAIM_STORAGE_KEY,FAST_REPORT_NAV_KEY].includes(key)) keys.push(key);
-      }
-      const values=keys.map(key=>[key,originState.getItem(key)]);
-      const activeKey=TAB_RUNTIME_PREFIX+BATCH_KEYS.active;
-      // Never publish an independently resumable child until revoking the source
-      // succeeded. Keep a partly copied child inactive even after a reload.
-      originState.setItem(activeKey,JSON.stringify(false));
-      sessionStorage.setItem(activeKey,JSON.stringify(false));
-      for(const [key,value] of values) {
-        if(value!==null && key!==activeKey)sessionStorage.setItem(key,value);
-      }
-      // The child owns the current operation. Returning to the listing tab
-      // after closing the child must never restart or resend the old item.
-      const fresh="suumo-jj-report-tab:"+createBatchOwnerToken();
-      sessionStorage.setItem(TAB_WINDOW_ID_KEY,fresh);
-      window.name=fresh;
-      sessionStorage.setItem(activeKey,JSON.stringify(true));
-      return true;
-    } catch (_) {
-      failTabRuntime(); // Never continue after a partly applied handoff.
-      return false;
-    }
-  }
-
-  // A window.open tab starts with a COPY of the opener's sessionStorage.
-  // Clear only that copy on its first history entry, never on reload or a normal
-  // transition in the original tab. Settings and cross-domain handoff stay in GM.
-  function discardOpenedTabRuntime() {
-    if (acceptReportPopupHandoff()) return;
-    if (tabRuntimeFault) return;
-    try {
-      const identity = sessionStorage.getItem(TAB_WINDOW_ID_KEY);
-      if (identity && window.name === identity) return; // Same real browser tab.
-      const active = sessionStorage.getItem(TAB_RUNTIME_PREFIX + "suumo_batch_active");
-      if (identity) {
-        // A blank NEW popup has a copied store but no window.name. A lost name
-        // in an existing history entry is ambiguous: preserve receipts and stop.
-        if (!window.opener || history.length !== 1 || pageStamp() || window.name) {
-          failTabRuntime();
-          return;
-        }
-      } else if (active === "true" || sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY) === "1") {
-        failTabRuntime();
-        return;
-      }
-      const keys = [];
-      if (identity) {
-        for (let i = 0; i < sessionStorage.length; i++) keys.push(sessionStorage.key(i));
-        for (const key of keys) if (key?.startsWith(TAB_RUNTIME_PREFIX) ||
-            [TAB_OWNER_TOKEN_KEY, TAB_ITEM_CONTEXT_KEY, TAB_SENT_CONTEXT_KEY,
-             TAB_UNCERTAIN_SEND_KEY, PAGE_NAV_TICKET_KEY, PAGE_ACTIVE_ENTRY_KEY,
-             SEND_CLAIM_STORAGE_KEY, FAST_REPORT_NAV_KEY].includes(key)) sessionStorage.removeItem(key);
-      }
-      const fresh = "suumo-jj-test-tab:" + createBatchOwnerToken();
-      sessionStorage.setItem(TAB_WINDOW_ID_KEY, fresh);
-      window.name = fresh;
-    } catch (_) { failTabRuntime(); }
-  }
-
-  const TAB_WINDOW_ID_KEY = "suumo_advanced_browser_tab_identity_v1";
   const TAB_OWNER_TOKEN_KEY = "suumo_batch_tab_owner_token";
   const BATCH_SKIP_LOG_KEY = "suumo_batch_skip_log_v1";
   const ISSUE_LOG_KEY = "suumo_advanced_issue_log_v1";
@@ -384,7 +254,7 @@
       const entryId=createBatchOwnerToken();
       history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,entryId
+        kind,sendId,entryId,pageUrl:location.href
       }},"",location.href);
       sessionStorage.setItem(PAGE_ACTIVE_ENTRY_KEY,entryId);
       return true;
@@ -393,13 +263,31 @@
       return false;
     }
   }
-  function queuePageTransition(kind,sendId=""){
+  function reportInputUrl(raw,base=location.href){
+    if(raw==="#")return location.origin+"/jj/chintai/shiryou/FR400FG001/";
+    if(!raw)return "";
+    try{
+      const url=new URL(raw,base);
+      if(url.origin!==location.origin || url.username || url.password ||
+         url.pathname!=="/jj/chintai/shiryou/FR400FG001/")return "";
+      url.searchParams.sort();
+      return url.href;
+    }catch(_){return "";}
+  }
+  function queuePageTransition(kind,sendId="",destinationURL=""){
     const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!matchesBatchIdentity(ctx))return false;
+    const inputUrl=kind==="input"?reportInputUrl(destinationURL ||
+      (isListingPage()?document.querySelector("#js-bknToiawaseFr")?.getAttribute("href"):"")):"";
+    if(kind==="input"&&!inputUrl)return false;
+    if(kind==="input"){
+      const id=(ctx.url.match(/\/chintai\/bc_(\d+)/i)||[])[1];
+      if(new URL(inputUrl).searchParams.getAll("bc").some(value=>value!==id))return false;
+    }
     try{
       sessionStorage.setItem(PAGE_NAV_TICKET_KEY,JSON.stringify({
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,at:Date.now()
+        kind,sendId,inputUrl,at:Date.now()
       }));
       return true;
     }catch(_){return false;}
@@ -418,6 +306,7 @@
     if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
     if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
        ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
+    if(kind==="input"&&(!ticket.inputUrl||ticket.inputUrl!==reportInputUrl(location.href)))return false;
     if(kind==="complete"){
       const guard=tabGet(FINAL_SEND_GUARD_KEY,null);
       if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
@@ -444,7 +333,8 @@
     try{activeEntry=sessionStorage.getItem(PAGE_ACTIVE_ENTRY_KEY)||"";}catch(_){}
     return !!activeEntry&&stamp?.entryId===activeEntry&&
       stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
-      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
+      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind&&
+      (kind!=="input"||(!!stamp.pageUrl&&reportInputUrl(stamp.pageUrl)===reportInputUrl(location.href)));
   }
   function primeCurrentTabItem(){
     const current=currentBatchIdentity();
@@ -487,7 +377,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.5";
+  const SCRIPT_VERSION = "8.0.6";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -962,7 +852,9 @@
   }
 
   function isAnyBatchActive() {
-    return !!tabGet(BATCH_KEYS.active, false);
+    // GM state left by a closed tab is not an active operation in this tab.
+    // It cannot suppress a new search or trigger old-progress restoration.
+    return isBatchActive();
   }
 
   function isSubmitting() {
@@ -1013,7 +905,6 @@
   }
 
   function setBatch(urls, index = 0, source = "regular") {
-    discardOpenedTabRuntime();
     if (tabRuntimeFault) return false;
     // A previous POST can still navigate this tab after a timeout.
     // Quarantine this browser tab even if the operator stopped the old batch.
@@ -1021,7 +912,9 @@
     try{sameTabHasUnresolvedPost=sessionStorage.getItem(TAB_UNCERTAIN_SEND_KEY)==="1";}catch(_){}
     const unresolvedPost=tabGet(FINAL_SEND_GUARD_KEY,null);
     if (tabRuntimeFault) return false;
-    if(sameTabHasUnresolvedPost||unresolvedPost?.status==="sending"){
+    // A closed previous tab may leave a GM guard behind. Only a still-owned
+    // send in THIS tab can block a new run; fresh tabs cannot resume that job.
+    if(sameTabHasUnresolvedPost||(isBatchOwnerTab()&&unresolvedPost?.status==="sending")){
       toast("安全停止：結果未確認の送信があるため、新しい一括処理は開始しません。\n元の申告タブを保持し、SUUMOの受信状況を確認してください。",11000);
       return false;
     }
@@ -1580,7 +1473,7 @@
               const inputUrl = directReportInputUrlFromListingDoc(doc, target.href);
               if (inputUrl && batchTaskStillCurrent(task) &&
                   !currentUncertainSend() && !tabGet(FINAL_SEND_GUARD_KEY,null)?.status) {
-                if (queuePageTransition("input")) {
+                if (queuePageTransition("input","",inputUrl)) {
                   console.info("[SUUMO JJ 上位版] 軽量遷移：掲載画面の表示を省略");
                   location.assign(inputUrl);
                   return;
@@ -2002,6 +1895,12 @@
   async function handleListingPage() {
     if (!isBatchActive()) return;
     if(!bindListingToTab())return rejectStaleTabPage();
+    // The report popup may share GM ownership while the source listing waits.
+    // Reloading that listing must not reset the popup stage or reopen its form.
+    const pending=readTabContext(PAGE_NAV_TICKET_KEY),itemContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(getBatchStage()!==STAGES.LISTING || (pending?.kind==="input"&&
+       pending.ownerToken===itemContext?.ownerToken&&pending.itemId===itemContext?.id&&
+       pending.index===itemContext?.index&&pending.url===itemContext?.url))return;
     if (currentIeloveExecutionItem()?.status === "complete") {
       goToNextListing();
       return;
@@ -3923,14 +3822,13 @@
 
     if (location.hostname !== "suumo.jp") return;
 
-    discardOpenedTabRuntime();
-    if (tabRuntimeFault) return;
-
-    // Runtime progress belongs to this tab; no stale global-batch recovery UI.
+    // As in v8.0.2, the settings UI never depends on progress or tab checks.
     addMainButtons();
+    if (tabRuntimeFault) return;
     if (!requireProfileManager()) return;
 
     if (!isBatchActive() && isAuthorizedIeloveBatchSearch()) {
+      if (tabRuntimeFault) return;
       const handoff=getIeloveHandoff();
       if (handoff?.token && tabGet("last_search_token",null)!==handoff.token) {
         tabSet("last_search_token",handoff.token);
