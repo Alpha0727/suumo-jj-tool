@@ -1,5 +1,5 @@
 {
-  "version": "8.0.6",
+  "version": "8.0.7",
   "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js",
-  "notes": "上位版Ver.8.0.6：8.0.2方式のTampermonkey共有GM進捗管理へ戻し、SUUMO掲載ページ②からJSのhref=#で別タブに開く申告入力③への引継ぎと左下「指摘設定」UIを改善。タブ所有者・物件ID・入力先URL・遷移チケット・Web Locks・送信ガードの照合を維持。元タブ再初期化による二重ポップアップと不正な保存状態の例外も修正。高速化、いえらぶ連携、検索・自動入力・確認工程は維持。Codexの模擬回帰166件PASS、FAIL 0件。実Tampermonkey・実SUUMO申告送信は未検証。古い進捗の復元は行わない。"
+  "notes": "Ver.8.0.7：SUUMO実サイトの href=javascript:void(0); 形式で止まっていた申告リンクの事前URL判定を削除し、以前の8.0.2と同じ通常リンククリック・画面遷移チケット方式に復帰。不要な掲載ページ省略GET高速化も削除。検索・住戸照合・会社選択・フォーム入力・二重送信防止・物件照合は維持。独立模擬確認16件PASS（実サイト・本物のTampermonkey動作と申告送信は未検証）。"
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.6
+// @version      8.0.7
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -254,7 +254,7 @@
       const entryId=createBatchOwnerToken();
       history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,entryId,pageUrl:location.href
+        kind,sendId,entryId
       }},"",location.href);
       sessionStorage.setItem(PAGE_ACTIVE_ENTRY_KEY,entryId);
       return true;
@@ -263,31 +263,13 @@
       return false;
     }
   }
-  function reportInputUrl(raw,base=location.href){
-    if(raw==="#")return location.origin+"/jj/chintai/shiryou/FR400FG001/";
-    if(!raw)return "";
-    try{
-      const url=new URL(raw,base);
-      if(url.origin!==location.origin || url.username || url.password ||
-         url.pathname!=="/jj/chintai/shiryou/FR400FG001/")return "";
-      url.searchParams.sort();
-      return url.href;
-    }catch(_){return "";}
-  }
-  function queuePageTransition(kind,sendId="",destinationURL=""){
+  function queuePageTransition(kind,sendId=""){
     const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!matchesBatchIdentity(ctx))return false;
-    const inputUrl=kind==="input"?reportInputUrl(destinationURL ||
-      (isListingPage()?document.querySelector("#js-bknToiawaseFr")?.getAttribute("href"):"")):"";
-    if(kind==="input"&&!inputUrl)return false;
-    if(kind==="input"){
-      const id=(ctx.url.match(/\/chintai\/bc_(\d+)/i)||[])[1];
-      if(new URL(inputUrl).searchParams.getAll("bc").some(value=>value!==id))return false;
-    }
     try{
       sessionStorage.setItem(PAGE_NAV_TICKET_KEY,JSON.stringify({
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,inputUrl,at:Date.now()
+        kind,sendId,at:Date.now()
       }));
       return true;
     }catch(_){return false;}
@@ -306,7 +288,6 @@
     if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
     if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
        ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
-    if(kind==="input"&&(!ticket.inputUrl||ticket.inputUrl!==reportInputUrl(location.href)))return false;
     if(kind==="complete"){
       const guard=tabGet(FINAL_SEND_GUARD_KEY,null);
       if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
@@ -333,8 +314,7 @@
     try{activeEntry=sessionStorage.getItem(PAGE_ACTIVE_ENTRY_KEY)||"";}catch(_){}
     return !!activeEntry&&stamp?.entryId===activeEntry&&
       stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
-      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind&&
-      (kind!=="input"||(!!stamp.pageUrl&&reportInputUrl(stamp.pageUrl)===reportInputUrl(location.href)));
+      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
   }
   function primeCurrentTabItem(){
     const current=currentBatchIdentity();
@@ -377,7 +357,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.6";
+  const SCRIPT_VERSION = "8.0.7";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -926,7 +906,6 @@
     tabDelete(REPORT_RETRY_KEY);
     tabDelete(FINAL_SEND_GUARD_KEY);
     forgetTabContexts();
-    try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     tabSet(BATCH_KEYS.ownerToken, ownerToken);
@@ -956,7 +935,6 @@
     tabDelete(BATCH_KEYS.stage);
     clearTabOwnerToken();
     forgetTabContexts();
-    try { sessionStorage.removeItem(FAST_REPORT_NAV_KEY); } catch (_) {}
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
@@ -1420,80 +1398,6 @@
     return true;
   }
 
-  // Ver.8.0: only skip the visual LISTING document when its actual link proves
-  // a same-origin, listing-specific GET form URL. Never synthesize a form URL.
-  // The first displayed listing is used as a capability probe; unsupported SUUMO
-  // link layouts keep the exact legacy navigation path without an extra fetch.
-  const FAST_REPORT_NAV_KEY = "suumo_advanced_fast_report_navigation_v8";
-  function directReportInputUrlFromListingDoc(doc, listingUrl) {
-    try {
-      const listing = new URL(listingUrl, location.origin);
-      const match = listing.pathname.match(/^\/chintai\/bc_(\d+)\/?$/i);
-      if (listing.origin !== location.origin || !match) return null;
-      const link = doc.querySelector("#js-bknToiawaseFr");
-      if (!link || String(link.tagName).toUpperCase() !== "A" ||
-          link.hasAttribute("onclick") || link.hasAttribute("target")) return null;
-      const raw = String(link.getAttribute("href") || "").trim();
-      if (!raw || raw.startsWith("#") || /^javascript:/i.test(raw)) return null;
-      const input = new URL(raw, listing.href);
-      if (input.origin !== listing.origin ||
-          input.pathname !== "/jj/chintai/shiryou/FR400FG001/" ||
-          input.username || input.password || input.hash) return null;
-      // The link must explicitly identify the listing; a generic form GET might
-      // depend on the current browser history or SUUMO's page JavaScript.
-      const idPattern = new RegExp("(^|\\D)" + match[1] + "(\\D|$)");
-      if (![...input.searchParams.values()].some(v => idPattern.test(v))) return null;
-      return input.href;
-    } catch (_) {
-      return null;
-    }
-  }
-  async function navigateNextListingWithoutDisplay(task, listingUrl) {
-    if (!batchTaskStillCurrent(task)) return;
-    let supported = false;
-    try { supported = sessionStorage.getItem(FAST_REPORT_NAV_KEY) === "1"; } catch (_) {}
-    if (supported) {
-      const target = new URL(listingUrl, location.origin);
-      if (target.origin === location.origin && /^\/chintai\/bc_\d+\/?$/i.test(target.pathname)) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 3500);
-        try {
-          // GET only. Do not simulate page button clicks, POST, or SUUMO JS.
-          const response = await fetch(target.href, {
-            method: "GET", credentials: "same-origin", redirect: "follow",
-            signal: controller.signal
-          });
-          const mime = String(response.headers?.get("content-type") || "");
-          const actual = new URL(response.url || target.href, location.origin);
-          if (response.ok && actual.href === target.href &&
-              (!mime || /text\/html/i.test(mime))) {
-            const html = await response.text();
-            if (batchTaskStillCurrent(task) && html.length >= 1000) {
-              const doc = new DOMParser().parseFromString(html, "text/html");
-              const inputUrl = directReportInputUrlFromListingDoc(doc, target.href);
-              if (inputUrl && batchTaskStillCurrent(task) &&
-                  !currentUncertainSend() && !tabGet(FINAL_SEND_GUARD_KEY,null)?.status) {
-                if (queuePageTransition("input","",inputUrl)) {
-                  console.info("[SUUMO JJ 上位版] 軽量遷移：掲載画面の表示を省略");
-                  location.assign(inputUrl);
-                  return;
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.debug("[SUUMO JJ 上位版] 軽量遷移は使用不可。通常の掲載画面へ戻します", error?.name || "error");
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-    }
-    // Any ambiguity, timeout, unusual URL, stale state, or DOM change: fall back.
-    if (batchTaskStillCurrent(task) && queuePageTransition("listing")) {
-      location.href = listingUrl;
-    }
-  }
-
   let nextListingStarted = false;
 
   function goToNextListing() {
@@ -1535,7 +1439,7 @@
     setFormReady(false);
     tabDelete(REPORT_RETRY_KEY);
     const task=captureBatchTask();
-    setTimeout(() => { void navigateNextListingWithoutDisplay(task, urls[index]); }, 150);
+    setTimeout(() => { if(batchTaskStillCurrent(task))location.href=urls[index]; }, 150);
   }
 
   // 入力完了後は独自の二段階確認を挟まず、SUUMO本来の内容確認画面へ進む。
@@ -1921,12 +1825,6 @@
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
     if(autoSkipEndedListingIfConfirmed())return;
     if (link && isBatchActive() && isListingPage() && isCurrentTabItem()) {
-      // Use only a real, listing-bound GET link as evidence for next item's
-      // optional background fetch. Never infer or manufacture a form URL.
-      try {
-        sessionStorage.setItem(FAST_REPORT_NAV_KEY,
-          directReportInputUrlFromListingDoc(document, urls[index]) ? "1" : "0");
-      } catch (_) {}
       if(!queuePageTransition("input"))return rejectStaleTabPage();
       markAdvancedTiming("listing-report-link-clicked");
       link.click();
