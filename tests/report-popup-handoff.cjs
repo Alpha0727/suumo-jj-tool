@@ -105,3 +105,15 @@ test("Completion and send guards remain in source",()=>{
   assert.match(source,pattern);
  new vm.Script(source);
 });
+// Static compatibility checks complement the DOM and queue regressions.
+const baseline=fs.readFileSync(path.join(__dirname,'../releases/SUUMO-DEV-8.0.2.user.js'),'utf8');
+function bodyOf(text,name){
+ const start=text.indexOf('  function '+name+'(')>=0?text.indexOf('  function '+name+'('):text.indexOf('  async function '+name+'(');
+ assert.ok(start>=0,'missing '+name);const end=text.indexOf('\n  }\n',start);assert.ok(end>start);return text.slice(start,end+5);
+}
+test('v8.0.2 field selectors remain exactly unchanged',()=>{
+ const fields=text=>text.match(/  const FIELDS = \{[\s\S]*?\n  \};/)?.[0];assert.ok(fields(baseline));assert.equal(fields(source),fields(baseline));
+});
+test('v8.0.2 UI, input, dates, search and matching implementations are retained',()=>{
+ for(const name of ['openSettings','addMainButtons','addIeloveSettingsButton','autofill','selectReportType','fillTodayDates','waitForReadyElement','updateBatchPanel','buildIeloveSuumoSearch','readSuumoRoomCard','validateIeloveProfile','ieloveFormMismatch'])assert.equal(bodyOf(source,name),bodyOf(baseline,name),name);
+});

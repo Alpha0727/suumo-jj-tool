@@ -15,7 +15,7 @@ const stage=section("  function getBatchStage()","  function createBatchOwnerTok
 const adapter=section("  const BatchState = {","  function getBatchUrls()");
 const states=section("  function getBatchUrls()","  function requireProfileManager()");
 const code=helpers+"\n"+stage+"\n"+adapter+"\n"+states+
- "\nglobalThis.api={BatchState,tabGet,tabSet,tabDelete,getBatchIndex,getBatchStage,isBatchActive,isAnyBatchActive,setBatchStage,setSubmitting,isSubmitting};";
+ "\nglobalThis.api={BatchState,tabGet,tabSet,tabDelete,getBatchUrls,getBatchIndex,getBatchStage,isBatchActive,isAnyBatchActive,setBatchStage,setSubmitting,isSubmitting};";
 function makeTab(gm=new Map(),token="",block=false){
  const ctx={BATCH_KEYS:{active:"suumo_batch_active",index:"suumo_batch_index",urls:"suumo_batch_urls",ownerToken:"suumo_batch_owner_token",stage:"suumo_batch_stage",submitting:"suumo_batch_submitting",confirmReady:"suumo_batch_confirm_ready",error:"suumo_batch_error",formReady:"suumo_batch_form_ready"},STAGES:{LISTING:"listing"},
  GM_getValue:(k,d)=>gm.has(k)?structuredClone(gm.get(k)):d,

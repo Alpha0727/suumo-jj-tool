@@ -48,7 +48,7 @@ function expose(source){const exposed=source.replace('  init();\n})();',`  globa
     try {
      if(opt.latency)await new Promise(r=>nativeTimeout(r,opt.latency));
      if(opt.cancel)store.ielove_suumo_handoff_v1.token='changed';
-     if(opt.stop)sessionStorage.setItem("suumo_advanced_tab_runtime_v1_suumo_batch_active","true");
+     if(opt.stop){store.suumo_batch_active=true;store.suumo_batch_owner_token="qa-live";sessionStorage.setItem("suumo_batch_tab_owner_token","qa-live");}
      if(opt.changeIndex)store.ielove_suumo_handoff_v1.index=1;
      if(opt.timeout)await new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('timeout','AbortError')),{once:true}));
      if(opt.fail || (opt.once && calls.length===1))throw new TypeError('network failure');
@@ -163,7 +163,7 @@ function expose(source){const exposed=source.replace('  init();\n})();',`  globa
    });
    await page.addScriptTag({content:expose(current)});
    const result=await page.evaluate(async()=>{
-    const execution=store.ielove_suumo_execution_v1;execution.items[0].url='https://suumo.jp/chintai/bc_100000001/';api.tabSet('ielove_suumo_execution_v1',execution);const old=location.href;history.replaceState(null,'',execution.items[0].url);api.setBatch([execution.items[0].url],0,'ielove');api.bindListingToTab();api.queuePageTransition('input');history.pushState(null,'',old);api.isCurrentTabItem();await api.autofill(false);const filled=document.querySelector('#js-textMansitu').value;
+    const execution=store.ielove_suumo_execution_v1;execution.items[0].url='https://suumo.jp/chintai/bc_100000001/';api.tabSet('ielove_suumo_execution_v1',execution);const old=location.href;history.replaceState(null,'',execution.items[0].url);api.setBatch([execution.items[0].url],0,'ielove');api.bindListingToTab();api.queuePageTransition('input','',old);history.pushState(null,'',old);api.isCurrentTabItem();await api.autofill(false);const filled=document.querySelector('#js-textMansitu').value;
     api.tabSet('suumo_batch_form_ready',true);api.tabSet('suumo_batch_stage','input-ready');document.querySelector('#js-textMansitu').value='999';await api.submitCurrentAndContinue();
     const blocked=api.tabGet('suumo_batch_error',false)&&clicks===0;
     document.querySelector('#js-textMansitu').value='101';api.tabSet('suumo_batch_error',false);api.tabSet('suumo_batch_form_ready',true);

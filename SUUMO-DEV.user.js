@@ -254,7 +254,7 @@
       const entryId=createBatchOwnerToken();
       history.replaceState({...base,[PAGE_HISTORY_STATE_KEY]:{
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,entryId
+        kind,sendId,entryId,pageUrl:location.href
       }},"",location.href);
       sessionStorage.setItem(PAGE_ACTIVE_ENTRY_KEY,entryId);
       return true;
@@ -263,13 +263,31 @@
       return false;
     }
   }
-  function queuePageTransition(kind,sendId=""){
+  function reportInputUrl(raw,base=location.href){
+    if(raw==="#")return location.origin+"/jj/chintai/shiryou/FR400FG001/";
+    if(!raw)return "";
+    try{
+      const url=new URL(raw,base);
+      if(url.origin!==location.origin || url.username || url.password ||
+         url.pathname!=="/jj/chintai/shiryou/FR400FG001/")return "";
+      url.searchParams.sort();
+      return url.href;
+    }catch(_){return "";}
+  }
+  function queuePageTransition(kind,sendId="",destinationURL=""){
     const ctx=readTabContext(TAB_ITEM_CONTEXT_KEY);
     if(!matchesBatchIdentity(ctx))return false;
+    const inputUrl=kind==="input"?reportInputUrl(destinationURL ||
+      (isListingPage()?document.querySelector("#js-bknToiawaseFr")?.getAttribute("href"):"")):"";
+    if(kind==="input"&&!inputUrl)return false;
+    if(kind==="input"){
+      const id=(ctx.url.match(/\/chintai\/bc_(\d+)/i)||[])[1];
+      if(new URL(inputUrl).searchParams.getAll("bc").some(value=>value!==id))return false;
+    }
     try{
       sessionStorage.setItem(PAGE_NAV_TICKET_KEY,JSON.stringify({
         ownerToken:ctx.ownerToken,index:ctx.index,url:ctx.url,itemId:ctx.id,
-        kind,sendId,at:Date.now()
+        kind,sendId,inputUrl,at:Date.now()
       }));
       return true;
     }catch(_){return false;}
@@ -288,6 +306,7 @@
     if(ticket.kind!==kind && !(ticket.kind==="listing"&&kind==="expired"))return false;
     if(ticket.ownerToken!==ctx.ownerToken||ticket.index!==ctx.index||
        ticket.url!==ctx.url||ticket.itemId!==ctx.id)return false;
+    if(kind==="input"&&(!ticket.inputUrl||ticket.inputUrl!==reportInputUrl(location.href)))return false;
     if(kind==="complete"){
       const guard=tabGet(FINAL_SEND_GUARD_KEY,null);
       if(!ticket.sendId||ticket.sendId!==guard?.id||guard?.status!=="sending")return false;
@@ -314,7 +333,8 @@
     try{activeEntry=sessionStorage.getItem(PAGE_ACTIVE_ENTRY_KEY)||"";}catch(_){}
     return !!activeEntry&&stamp?.entryId===activeEntry&&
       stamp?.ownerToken===ctx.ownerToken&&stamp?.index===ctx.index&&
-      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind;
+      stamp?.url===ctx.url&&stamp?.itemId===ctx.id&&stamp?.kind===kind&&
+      (kind!=="input"||(!!stamp.pageUrl&&reportInputUrl(stamp.pageUrl)===reportInputUrl(location.href)));
   }
   function primeCurrentTabItem(){
     const current=currentBatchIdentity();
@@ -1453,7 +1473,7 @@
               const inputUrl = directReportInputUrlFromListingDoc(doc, target.href);
               if (inputUrl && batchTaskStillCurrent(task) &&
                   !currentUncertainSend() && !tabGet(FINAL_SEND_GUARD_KEY,null)?.status) {
-                if (queuePageTransition("input")) {
+                if (queuePageTransition("input","",inputUrl)) {
                   console.info("[SUUMO JJ 上位版] 軽量遷移：掲載画面の表示を省略");
                   location.assign(inputUrl);
                   return;
@@ -1875,6 +1895,12 @@
   async function handleListingPage() {
     if (!isBatchActive()) return;
     if(!bindListingToTab())return rejectStaleTabPage();
+    // The report popup may share GM ownership while the source listing waits.
+    // Reloading that listing must not reset the popup stage or reopen its form.
+    const pending=readTabContext(PAGE_NAV_TICKET_KEY),itemContext=readTabContext(TAB_ITEM_CONTEXT_KEY);
+    if(getBatchStage()!==STAGES.LISTING || (pending?.kind==="input"&&
+       pending.ownerToken===itemContext?.ownerToken&&pending.itemId===itemContext?.id&&
+       pending.index===itemContext?.index&&pending.url===itemContext?.url))return;
     if (currentIeloveExecutionItem()?.status === "complete") {
       goToNextListing();
       return;
@@ -3802,6 +3828,7 @@
     if (!requireProfileManager()) return;
 
     if (!isBatchActive() && isAuthorizedIeloveBatchSearch()) {
+      if (tabRuntimeFault) return;
       const handoff=getIeloveHandoff();
       if (handoff?.token && tabGet("last_search_token",null)!==handoff.token) {
         tabSet("last_search_token",handoff.token);
