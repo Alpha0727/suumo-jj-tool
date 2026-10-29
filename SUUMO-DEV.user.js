@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.8
+// @version      8.0.9
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -357,7 +357,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.8";
+  const SCRIPT_VERSION = "8.0.9";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -758,7 +758,6 @@
       setBatchError(false);
       updateBatchPanel();
 
-      toast(attempts > 0 ? `申告フォームを再確認しています…（${attempts + 1}/${FORM_PREP_MAX_ATTEMPTS}）` : "申告フォームを準備しています…");
 
       const domReady = await waitForReportFormDom();
       if (!domReady) throw new Error("申告フォームのDOM待機がタイムアウトしました");
@@ -783,7 +782,6 @@
       setBatchStage(STAGES.INPUT_READY);
       tabDelete(FORM_PREP_ATTEMPTS_KEY);
       updateBatchPanel();
-      toast(`申告フォームを準備しました\n${count}項目入力`, 3000);
       return true;
     } catch (error) {
       console.warn("[SUUMO JJ] form preparation failed:", error);
@@ -1475,7 +1473,6 @@
     setSubmitting(true);
     setBatchStage(STAGES.SUBMITTING_CONFIRM);
     updateBatchPanel();
-    toast("内容確認画面へ進みます…");
 
     const confirmLink = document.querySelector(
       'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG002/"]'
@@ -1549,7 +1546,6 @@
     setBatchStage(STAGES.SUBMITTING_FINAL);
     setConfirmReady(false);
     updateBatchPanel();
-    toast("確認画面を確認しました。\n送信します…",1800);
     const sendLink=await waitForReadyElement(
       'a.js-clickToForm[rel="/jj/chintai/shiryou/FR400FG003/"]',6000,
       el=>el.isConnected&&!el.hasAttribute("disabled")
@@ -1811,15 +1807,12 @@
     }
     if(autoSkipEndedListingIfConfirmed())return;
 
-    const urls = getBatchUrls();
-    const index = getBatchIndex();
     setSubmitting(false);
     setConfirmReady(false);
     setBatchError(false);
     setFormReady(false);
     tabDelete(FORM_PREP_ATTEMPTS_KEY);
     updateBatchPanel();
-    toast(`掲載ページ ${index + 1}/${urls.length}\n申告フォームを開きます…`);
 
     markAdvancedTiming("listing-page-ready");
     const link = await waitForReadyElement("#js-bknToiawaseFr", 8000);
