@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.7
+// @version      8.0.8
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -357,7 +357,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.7";
+  const SCRIPT_VERSION = "8.0.8";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2838,6 +2838,12 @@
   }
 
   function navigateIeloveBatch(step) {
+    // Only the Ielove "next" and final "report" buttons are gated by the
+    // already-displayed input-format warnings. Previous navigation stays available.
+    if (step > 0 && document.getElementById("tm-setting-panel")?.updateIeloveWarning?.()) {
+      toast("入力エラーがあるため次へ進めません。修正してからもう一度押してください。", 4500);
+      return;
+    }
     const draft = persistIeloveBatchEditor();
     if (!draft) return;
     const index = Number(draft.index) || 0;
