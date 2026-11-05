@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.10
+// @version      8.1
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -357,7 +357,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.10";
+  const SCRIPT_VERSION = "8.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -714,13 +714,6 @@
     closeSuumoDateCalendar();
     requestAnimationFrame(closeSuumoDateCalendar);
 
-    if (showToast) {
-      toast(
-        filledCount
-          ? `入力 ${filledCount} 箇所を更新しました`
-          : "対象欄が見つかりませんでした"
-      );
-    }
 
     return filledCount;
   }
@@ -788,7 +781,7 @@
       const used = Number(tabGet(FORM_PREP_ATTEMPTS_KEY, 0)) || 0;
 
       if (used < FORM_PREP_MAX_ATTEMPTS && isBatchActive() && isInputPage()) {
-        toast(`フォーム準備を再試行します（${used}/${FORM_PREP_MAX_ATTEMPTS}）`, 1800);
+        
         await sleep(RETRY_WAIT_MS);
         formPreparationRunning = false;
         return await prepareReportForm(true);
@@ -1361,7 +1354,7 @@
     tabSet(REPORT_RETRY_KEY,{index,url,phase,attempts});
     setSubmitting(false);setConfirmReady(false);setBatchError(false);setFormReady(false);
     setBatchStage(STAGES.LISTING);
-    toast(phase+"の処理失敗（"+attempts+"/3回目）\n0.5秒後に再試行します",2500);
+    
     const task=captureBatchTask();
     setTimeout(()=>{
       if(!batchTaskStillCurrent(task))return;
@@ -1535,13 +1528,16 @@
       url:getBatchUrls()[getBatchIndex()]});
   }
   async function handleConfirmPage() {
-    if (!isBatchActive() || confirmSendStarted || currentUncertainSend() ||
+    if (confirmPageRunning || !isBatchActive() || confirmSendStarted || currentUncertainSend() ||
         blockUncertainIeloveResend()) return;
     if(!isCurrentTabItem())return rejectStaleTabPage();
     const stage=getBatchStage();
     if(stage!==STAGES.SUBMITTING_CONFIRM&&stage!==STAGES.SUBMITTING_FINAL)return;
     const preTarget=captureSubmissionTarget();
     if(!preTarget)return;
+    // Prevent same-document reentry before any asynchronous wait.
+    confirmPageRunning = true;
+    try {
     setSubmitting(true);
     setBatchStage(STAGES.SUBMITTING_FINAL);
     setConfirmReady(false);
@@ -1564,7 +1560,13 @@
       }
       await navigator.locks.request(SEND_LOCK_NAME,{mode:"exclusive",ifAvailable:true},async lock=>{
         if(!lock){
-          toast("別のタブが送信処理中のため、このタブでは送信しません",6000);
+          // A lock conflict does not prove which tab or call holds the lock.
+          // Do not retry or advance automatically while send ownership is unknown.
+          recordIssue({phase:"最終送信",index:getBatchIndex()+1,
+            kind:"送信ロック競合",action:"送信保留・要確認",
+            detail:"送信排他ロックを取得できず、送信処理を保留しました",attempts:1,
+            url:getBatchUrls()[getBatchIndex()]});
+          toast("安全停止：送信処理の競合を検出しました。送信済みか確認してください。",8500);
           return;
         }
         // Re-check inside the cross-tab critical section after all awaits.
@@ -1601,6 +1603,9 @@
       console.error("[SUUMO JJ 上位版] 排他送信を停止",error);
       // A partial failure after claiming may mean a send was issued; never retry.
       reportSendLockUnavailable();
+    }
+    } finally {
+      confirmPageRunning = false;
     }
   }
 
@@ -1669,7 +1674,7 @@
     setFormReady(false);
     tabDelete(FORM_PREP_ATTEMPTS_KEY);
 
-    toast(`この物件を再実行します\n${index + 1} / ${urls.length}`, 1800);
+    
 
     if(!queuePageTransition("listing"))return rejectStaleTabPage();
     const task=captureBatchTask();
@@ -1733,7 +1738,7 @@
     setFormReady(false);
     tabDelete(FORM_PREP_ATTEMPTS_KEY);
     tabDelete(REPORT_RETRY_KEY);
-    toast("掲載 "+(index+1)+"件目をスキップ（"+reason+"）\n次の掲載へ進みます",1600);
+    
     location.href=urls[next];
     return true;
   }
@@ -1789,7 +1794,7 @@
     }
     clearBatch();
     document.getElementById("tm-batch-status")?.remove();
-    toast("一括処理を中止しました");
+    
   }
 
   async function handleListingPage() {
@@ -1857,6 +1862,7 @@
   let watchdogBusy = false;
   let formPreparationRunning = false;
   let confirmSendStarted = false;
+  let confirmPageRunning = false;
 
   function cancelAutoAction(rememberPhase = false) {
     if (autoActionTimer) clearTimeout(autoActionTimer);
@@ -2509,7 +2515,7 @@
       }
 
       updateHalfWidthWarning();
-      toast(`${converted}項目をまとめて修正しました ✓`);
+      
     };
 
     panel.querySelectorAll(".tm-date-skip").forEach(checkbox => {
@@ -2553,7 +2559,7 @@
     document.getElementById("tm-save-setting").onclick = () => {
       if (location.hostname === "cloud.ielove.jp" && document.getElementById("tm-ielove-batch-heading")?.style.display !== "none") {
         persistIeloveBatchEditor();
-        toast("この物件の編集内容を保存しました ✓");
+        
         return;
       }
       if (updateHalfWidthWarning()) {
@@ -2618,7 +2624,7 @@
       DATE_SKIP.apply = applySkip;
       DATE_SKIP.contract = contractSkip;
       DATE_SKIP.confirm = confirmSkip;
-      toast("設定を保存しました ✓");
+      
     };
 
     document.getElementById("tm-close-setting").onclick = closeSettingsPanel;
@@ -2688,7 +2694,7 @@
         button.textContent = "取得中 " + records.length + "/" + rows.length;
       }
       GM_setValue(IELOVE_BATCH_DRAFT_KEY, { records, index: 0, savedAt: Date.now() });
-      toast(records.length + "件の物件情報を取得・保存しました ✓", 5000);
+      
       showIeloveBatchDraft(records);
     } catch (error) {
       toast("取得を中断しました：" + String(error.message || error), 6000);
