@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.1
+// @version      8.2
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -351,13 +351,12 @@
   function rejectStaleTabPage(){
     if (tabRuntimeFault) return failTabRuntime();
     // Never touch shared status or index from an older tab.
-    toast("安全停止：この画面は現在処理中の掲載と対応していません。元の一括処理タブで確認してください。",9000);
     console.warn("[SUUMO JJ 上位版] 古い画面の実行を拒否",location.pathname);
     return false;
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.1";
+  const SCRIPT_VERSION = "8.2";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -2053,6 +2052,47 @@
       document.body.appendChild(panel);
     }
 
+    // Initialize one stable panel subtree. Updating ordinary text must not
+    // remove the action buttons or reset their countdown.
+    if (!panel.__suumoNodes || !panel.querySelector("#tm-stop-batch")) {
+      panel.innerHTML = [
+        '<div style="font-size:18px;font-weight:bold;margin-bottom:8px;">SUUMO 一括処理</div>',
+        '<div id="tm-batch-counter" style="font-size:27px;font-weight:bold;margin-bottom:6px;"></div>',
+        '<div id="tm-batch-property" style="font-size:13px;font-weight:bold;margin-bottom:5px;"></div>',
+        '<div id="tm-batch-url" style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px;"></div>',
+        '<div style="font-size:11px;line-height:1.5;padding:6px 8px;margin-bottom:9px;background:#f5f7fa;border-radius:6px;color:#25364a;">',
+        '<span style="font-weight:bold;color:#526575;">自動入力予定　</span><span id="tm-batch-planned-values"></span></div>',
+        '<div id="tm-batch-message" style="font-size:13px;padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;"></div>',
+        '<div id="tm-batch-primary"></div>',
+        '<div style="display:flex;gap:7px;">',
+        '<button id="tm-skip-item" style="flex:1;padding:8px;cursor:pointer;">スキップ</button>',
+        '<button id="tm-stop-batch" style="flex:1;padding:8px;cursor:pointer;">中止</button>',
+        '</div>'
+      ].join("");
+      panel.__suumoNodes = {
+        counter: panel.querySelector("#tm-batch-counter"),
+        property: panel.querySelector("#tm-batch-property"),
+        url: panel.querySelector("#tm-batch-url"),
+        plannedValues: panel.querySelector("#tm-batch-planned-values"),
+        message: panel.querySelector("#tm-batch-message"),
+        primary: panel.querySelector("#tm-batch-primary"),
+        skip: panel.querySelector("#tm-skip-item"),
+        stop: panel.querySelector("#tm-stop-batch")
+      };
+      panel.__suumoNodes.skip.onclick = () => {
+        if (panel.__suumoNodes.skip.disabled) return;
+        cancelAutoAction(false);
+        autoActionCancelledPhase = null;
+        setConfirmReady(false);
+        skipBatchItem();
+      };
+      panel.__suumoNodes.stop.onclick = () => {
+        cancelAutoAction(false);
+        autoActionCancelledPhase = null;
+        stopBatch();
+      };
+    }
+
     const current = urls[index] || "";
     const ieloveItem = currentIeloveExecutionItem();
     const plannedProfile = ieloveItem?.profile || PROFILE;
@@ -2094,83 +2134,72 @@
       statusBackground = "#fff1f0";
     }
     const canSubmit = isInputPage() && !submitting && !batchError && formReady && !uncertainSend;
-    let mainButton = "";
-
-    if (canSubmit) {
-      mainButton = `
-        <button id="tm-submit-next" style="width:100%;padding:11px;border:0;border-radius:9px;background:#9fc2fb;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
-          SUUMO内容確認へ進む（自動）
-        </button>`;
-    } else if (batchError && !uncertainSend) {
-      mainButton = `
-        <button id="tm-retry-current" style="width:100%;padding:11px;border:0;border-radius:9px;background:#d9363e;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:7px;">
-          ↻ この物件を再実行
-        </button>`;
-    } else {
-      mainButton = `
-        <button disabled style="width:100%;padding:11px;border:0;border-radius:9px;background:#aaa;color:#fff;font-size:14px;font-weight:bold;margin-bottom:7px;">
-          ${submitting ? "送信処理中…" : (isInputPage() && !formReady ? "申告フォーム準備中…" : "入力画面で操作できます")}
-        </button>`;
-    }
-
-    const nextPanelMarkup = `
-      <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">SUUMO 一括処理</div>
-      <div style="font-size:27px;font-weight:bold;margin-bottom:6px;">${Math.min(index + 1, urls.length)} / ${urls.length}</div>
-      ${ieloveItem ? `<div style="font-size:13px;font-weight:bold;margin-bottom:5px;">${escapeHtml(ieloveItem.name)} ／ ${escapeHtml(ieloveItem.profile.room)}</div>` : ""}
-      <div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:10px;">${escapeHtml(current)}</div>
-      <div style="font-size:11px;line-height:1.5;padding:6px 8px;margin-bottom:9px;background:#f5f7fa;border-radius:6px;color:#25364a;"><span style="font-weight:bold;color:#526575;">自動入力予定　</span>${plannedInputHtml}</div>
-      <div style="font-size:13px;background:${statusBackground};padding:10px;border-radius:7px;margin-bottom:11px;line-height:1.6;white-space:pre-line;">${escapeHtml(statusText)}</div>
-      ${mainButton}
-      <div style="display:flex;gap:7px;">
-        <button id="tm-skip-item" ${submitting||uncertainSend ? "disabled" : ""} style="flex:1;padding:8px;cursor:${submitting||uncertainSend ? "default" : "pointer"};">スキップ</button>
-        <button id="tm-stop-batch" style="flex:1;padding:8px;cursor:pointer;">中止</button>
-      </div>`;
-    // Preserve event handlers, the live countdown, and user focus when only
-    // periodic status reconciliation calls this function with unchanged data.
-    // Never skip batch checks above; only avoid reconstructing identical DOM.
-    if (panel.__suumoLastMarkup !== nextPanelMarkup ||
-        !panel.querySelector("#tm-stop-batch")) {
-      panel.innerHTML = nextPanelMarkup;
-      panel.__suumoLastMarkup = nextPanelMarkup;
-    }
-
-    const submit = document.getElementById("tm-submit-next");
-    if (submit) {
-      const phase = AUTO_ACTION_SINGLE_PHASE;
-      const strongColor = "#2f7cf6";
-      const lightColor = "#9fc2fb";
-
-      submit.onclick = () => {
-        autoActionCancelledPhase = null;
-        cancelAutoAction(false);
-        submitCurrentAndContinue();
-      };
-
-      startAutoAction(submit, phase, strongColor, lightColor);
-    } else {
-      cancelAutoAction(false);
-      autoActionCancelledPhase = null;
-    }
-
-    const retryCurrent = document.getElementById("tm-retry-current");
-    if (retryCurrent) retryCurrent.onclick = retryCurrentListing;
-
-     const skip = document.getElementById("tm-skip-item");
-    if (skip && !submitting && !uncertainSend) {
-      skip.onclick = () => {
-        cancelAutoAction(false);
-        autoActionCancelledPhase = null;
-        setConfirmReady(false);
-        skipBatchItem();
-      };
-    }
-
-    document.getElementById("tm-stop-batch").onclick = () => {
-      cancelAutoAction(false);
-      autoActionCancelledPhase = null;
-      stopBatch();
+    const nodes = panel.__suumoNodes;
+    const setText = (node, value) => {
+      if (node.textContent !== value) node.textContent = value;
     };
+
+    setText(nodes.counter, Math.min(index + 1, urls.length) + " / " + urls.length);
+    const propertyName = ieloveItem ? String(ieloveItem.name || "") + " ／ " + String(ieloveItem.profile.room || "") : "";
+    const propertyDisplay = ieloveItem ? "" : "none";
+    if (nodes.property.style.display !== propertyDisplay) nodes.property.style.display = propertyDisplay;
+    setText(nodes.property, propertyName);
+    setText(nodes.url, current);
+    if (nodes.plannedValues.__suumoLastHtml !== plannedInputHtml) {
+      nodes.plannedValues.innerHTML = plannedInputHtml;
+      nodes.plannedValues.__suumoLastHtml = plannedInputHtml;
+    }
+    setText(nodes.message, statusText);
+    if (nodes.message.__suumoBackground !== statusBackground) {
+      nodes.message.style.background = statusBackground;
+      nodes.message.__suumoBackground = statusBackground;
+    }
+
+    // A mode change may replace the primary action; text changes do not.
+    const primaryMode = canSubmit ? "submit" : batchError && !uncertainSend ? "retry" : "disabled";
+    const disabledLabel = submitting ? "送信処理中…" :
+      (isInputPage() && !formReady ? "申告フォーム準備中…" : "入力画面で操作できます");
+    if (nodes.primary.dataset.mode !== primaryMode || !nodes.primary.firstElementChild) {
+      const action = document.createElement("button");
+      action.style.cssText = "width:100%;padding:11px;border:0;border-radius:9px;background:#aaa;color:#fff;font-size:14px;font-weight:bold;margin-bottom:7px;";
+      if (primaryMode === "submit") {
+        action.id = "tm-submit-next";
+        action.textContent = "SUUMO内容確認へ進む（自動）";
+        action.style.background = "#9fc2fb";
+        action.style.cursor = "pointer";
+        action.onclick = () => {
+          autoActionCancelledPhase = null;
+          cancelAutoAction(false);
+          submitCurrentAndContinue();
+        };
+      } else if (primaryMode === "retry") {
+        action.id = "tm-retry-current";
+        action.textContent = "↻ この物件を再実行";
+        action.style.background = "#d9363e";
+        action.style.cursor = "pointer";
+        action.onclick = retryCurrentListing;
+      } else {
+        action.disabled = true;
+        action.textContent = disabledLabel;
+      }
+      nodes.primary.replaceChildren(action);
+      nodes.primary.dataset.mode = primaryMode;
+      if (primaryMode === "submit") {
+        startAutoAction(action, AUTO_ACTION_SINGLE_PHASE, "#2f7cf6", "#9fc2fb");
+      } else {
+        cancelAutoAction(false);
+        autoActionCancelledPhase = null;
+      }
+    } else if (primaryMode === "disabled") {
+      setText(nodes.primary.firstElementChild, disabledLabel);
+    }
+
+    const skipDisabled = submitting || uncertainSend;
+    if (nodes.skip.disabled !== skipDisabled) nodes.skip.disabled = skipDisabled;
+    const skipCursor = skipDisabled ? "default" : "pointer";
+    if (nodes.skip.style.cursor !== skipCursor) nodes.skip.style.cursor = skipCursor;
   }
+
 
   function normalizePhone(value) {
     return String(value || "").normalize("NFKC").replace(/\D/g, "");
