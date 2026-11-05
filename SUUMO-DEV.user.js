@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告 上位版
 // @namespace    jp.re.autofill.suumo.dev
-// @version      8.0.9
+// @version      8.0.10
 // @description  いえらぶCLOUD連携・複数物件の一括指摘に対応する上位版。一般配布版とは独立して更新。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/rent
@@ -357,7 +357,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0.9";
+  const SCRIPT_VERSION = "8.0.10";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/SUUMO-DEV.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest-dev.json?ref=dev";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/dev/latest-dev.json";
@@ -3408,11 +3408,16 @@
       if(!choices[index].__companies.length)return; // 0件物件は対象選択から除外
       const section = document.createElement("section");
       section.style.cssText = "padding:14px;margin-bottom:12px;border:1px solid #dce3e8;border-radius:12px;background:#fff";
-      const heading = document.createElement("div");
-      heading.textContent = (index + 1) + ". " + (record.name || "物件名未取得") + " ／ " + (record.room || "");
-      heading.style.cssText = "font-weight:bold;font-size:16px;margin-bottom:10px";
-      section.appendChild(heading);
       const companies = choices[index].__companies;
+      const heading = document.createElement("div");
+      heading.style.cssText = "display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-weight:bold;font-size:16px;margin-bottom:10px";
+      const propertyTitle = document.createElement("span");
+      propertyTitle.textContent = (index + 1) + ". " + (record.name || "物件名未取得") + " ／ " + (record.room || "");
+      const companyCount = document.createElement("span");
+      companyCount.textContent = "掲載 " + companies.length + "件";
+      companyCount.style.cssText = "display:inline-flex;align-items:center;white-space:nowrap;background:#dbeafe;color:#1d4ed8;font-size:13px;font-weight:bold;padding:5px 10px;border-radius:10px";
+      heading.append(propertyTitle,companyCount);
+      section.appendChild(heading);
       if (!companies.length) {
         const empty = document.createElement("div");
         empty.textContent = choices[index].__collectionError?
