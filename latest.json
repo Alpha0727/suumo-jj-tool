@@ -1,5 +1,5 @@
 {
-  "version": "8.0",
-  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-8.0.user.js",
-  "notes": "一般版をVer.8.0に更新。Ver.7.50から機能・画面・設定・自動処理は一切変更なし（バージョン表記のみ）。"
+  "version": "8.1",
+  "install_url": "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/releases/SUUMO-8.1.user.js",
+  "notes": "一般版Ver.8.1：初回起動（既存利用者は8.1更新後の初回）に基本設定の会社名・担当者名・電話番号・メールアドレスを一度だけ空欄にし、全4項目の入力・保存を必須とする。保存するとTampermonkeyの設定領域に保持し、次回から再入力不要。管理会社名・管理会社TEL・管理会社担当者・号室・日付等は変更しない。自動入力・一括処理は基本設定が揃うまで停止。模擬テスト済み、実SUUMO・Tampermonkeyは未検証。"
 }

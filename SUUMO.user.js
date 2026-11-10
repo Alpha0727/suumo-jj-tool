@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SUUMO JJ 一括申告
 // @namespace    jp.re.autofill.suumo
-// @version      8.0
+// @version      8.1
 // @description  SUUMO一括申告＋いえらぶCLOUD設定入力。GitHub自動更新・2秒自動送信・折り畳み日付設定対応。
 // @match        https://suumo.jp/*
 // @match        https://cloud.ielove.jp/*
@@ -26,11 +26,22 @@
     GM_setValue(MANAGER_INITIALIZATION_KEY, true);
   }
 
+  // One-time basic setup reset when upgrading to Ver.8.1.
+  // After saving, the marker prevents clearing the user's entries again.
+  const BASIC_PROFILE_INITIALIZATION_KEY = "basic_profile_required_initialized_20261110_v81";
+  if (!GM_getValue(BASIC_PROFILE_INITIALIZATION_KEY, false)) {
+    ["profile_company", "profile_manager1", "profile_tel", "profile_email"].forEach(
+      key => GM_deleteValue(key)
+    );
+    GM_deleteValue("profile_initialized");
+    GM_setValue(BASIC_PROFILE_INITIALIZATION_KEY, true);
+  }
+
   const PROFILE = {
-    company: GM_getValue("profile_company", "株式会社エールーム"),
+    company: GM_getValue("profile_company", ""),
     manager1: GM_getValue("profile_manager1", ""),
-    tel: normalizePhone(GM_getValue("profile_tel", "0362401146")),
-    email: GM_getValue("profile_email", "a-ueno@arooms.jp"),
+    tel: normalizePhone(GM_getValue("profile_tel", "")),
+    email: GM_getValue("profile_email", ""),
     mgmt_company: GM_getValue("mgmt_company", ""),
     mgmt_tel: String(GM_getValue("mgmt_tel", "")).normalize("NFKC").replace(/\D/g, ""),
     manager2: GM_getValue("manager2", ""),
@@ -123,7 +134,7 @@
   }
 
   const EXCLUDED_COMPANIES_KEY = "suumo_permanent_excluded_companies";
-  const SCRIPT_VERSION = "8.0";
+  const SCRIPT_VERSION = "8.1";
   const SCRIPT_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/SUUMO.user.js";
   const VERSION_URL = "https://api.github.com/repos/Alpha0727/suumo-jj-tool/contents/latest.json?ref=main";
   const VERSION_RAW_URL = "https://raw.githubusercontent.com/Alpha0727/suumo-jj-tool/main/latest.json";
@@ -401,7 +412,7 @@
   }
 
   async function autofill(showToast = true) {
-    if (!requireProfileManager()) return 0;
+    if (!requireBasicProfile()) return 0;
     await sleep(300);
 
     let filledCount = 0;
@@ -443,7 +454,7 @@
 
   async function prepareReportForm(forceRetry = false) {
     if (!isBatchActive() || !isInputPage()) return false;
-    if (!requireProfileManager()) return false;
+    if (!requireBasicProfile()) return false;
     if (formPreparationRunning) return false;
     if (isFormReady()) return true;
     if (isBatchError() && !forceRetry) return false;
@@ -565,22 +576,32 @@
   }
 
 
-  function requireProfileManager() {
-    if (String(PROFILE.manager1 || "").trim()) return true;
-    toast("担当者名が未設定です。基本設定から入力・保存してください。", 6000);
+  const BASIC_PROFILE_FIELDS = [
+    {key:"company",id:"tm-profile-company",label:"会社名"},
+    {key:"manager1",id:"tm-profile-manager1",label:"担当者名"},
+    {key:"tel",id:"tm-profile-tel",label:"電話番号"},
+    {key:"email",id:"tm-profile-email",label:"メールアドレス"}
+  ];
+  function requireBasicProfile() {
+    const missing = BASIC_PROFILE_FIELDS.filter(field => {
+      const value = field.key === "tel" ? normalizePhone(PROFILE[field.key]) : String(PROFILE[field.key] || "").trim();
+      return !value;
+    });
+    if (!missing.length) return true;
+    toast("基本設定の未入力項目：" + missing.map(field=>field.label).join("・") + "。入力して保存してください。", 6000);
     if (!document.getElementById("tm-setting-panel")) openSettings();
-    const input = document.getElementById("tm-profile-manager1");
-    const details = input?.closest("details");
+    const details = document.getElementById("tm-basic-settings");
     if (details) details.open = true;
-    if (input) {
-      input.style.border = "2px solid #e03131";
-      input.focus();
+    for (const field of missing) {
+      const input = document.getElementById(field.id);
+      if (input) input.style.border = "2px solid #e03131";
     }
+    document.getElementById(missing[0].id)?.focus();
     return false;
   }
 
   function setBatch(urls, index = 0) {
-    if (!requireProfileManager()) return false;
+    if (!requireBasicProfile()) return false;
     const ownerToken = createBatchOwnerToken();
     setTabOwnerToken(ownerToken);
     GM_setValue(BATCH_KEYS.ownerToken, ownerToken);
@@ -1743,6 +1764,7 @@
     });
 
     document.getElementById("tm-settings-batch").onclick = () => {
+      if (!requireBasicProfile()) return;
       panel.remove();
       openCompanySelection();
     };
@@ -1758,15 +1780,20 @@
         return;
       }
 
-      const profileCompany = document.getElementById("tm-profile-company").value.trim();
-      const profileManager1 = document.getElementById("tm-profile-manager1").value.trim();
-      if (!profileManager1) {
-        const input = document.getElementById("tm-profile-manager1");
-        input.style.border = "2px solid #e03131";
-        input.focus();
-        toast("基本設定の担当者名を入力して保存してください。", 5000);
+      const missingBasic = BASIC_PROFILE_FIELDS.filter(field => {
+        const input = document.getElementById(field.id);
+        const value = field.key === "tel" ? normalizePhone(input?.value) : String(input?.value || "").trim();
+        if (input) input.style.border = value ? "" : "2px solid #e03131";
+        return !value;
+      });
+      if (missingBasic.length) {
+        document.getElementById("tm-basic-settings").open = true;
+        document.getElementById(missingBasic[0].id)?.focus();
+        toast("基本設定の未入力項目：" + missingBasic.map(field=>field.label).join("・") + "。全項目を入力して保存してください。", 5000);
         return;
       }
+      const profileCompany = document.getElementById("tm-profile-company").value.trim();
+      const profileManager1 = document.getElementById("tm-profile-manager1").value.trim();
       const profileTel = normalizePhone(document.getElementById("tm-profile-tel").value);
       const profileEmail = document.getElementById("tm-profile-email").value.trim();
 
@@ -1966,14 +1993,14 @@
     // SUUMO側の申告フォームでもそのまま利用できる。
     if (location.hostname === "cloud.ielove.jp") {
       addIeloveSettingsButton();
-      requireProfileManager();
+      requireBasicProfile();
       return;
     }
 
     if (location.hostname !== "suumo.jp") return;
 
     addMainButtons();
-    if (!requireProfileManager()) return;
+    if (!requireBasicProfile()) return;
 
     if (!isBatchActive()) return;
     startBackgroundWatchdog();
